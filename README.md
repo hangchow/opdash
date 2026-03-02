@@ -11,6 +11,11 @@ Options position dashboard and plotting tool.
 ## Data Source Support
 
 - Currently only supports `futu-api`: https://openapi.futunn.com/futu-api-doc/en/intro/intro.html
+- You must start and log in to Futu OpenD before running this script, otherwise the program cannot request quote/position data.
+- If you want to compare two ports (for example `11111,11112`), run two OpenD instances and make each instance listen on a different port.
+- Official OpenD startup docs:
+  - Visual OpenD: https://openapi.futunn.com/futu-api-doc/quick/opend-base.html
+  - Command Line OpenD: https://openapi.futunn.com/futu-api-doc/opend/opend-cmd.html
 
 ## Quick Start
 

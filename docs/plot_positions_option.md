@@ -35,6 +35,13 @@ If you pass two ports, charts are shown side by side (one column per port) for c
 3. Futu OpenD (or compatible Futu gateway) running and reachable.
 4. A trading account that can query US option positions.
 
+OpenD must be started and logged in before running this script; otherwise it cannot fetch position/quote data.
+If you use two ports (for example `11111,11112`), start two OpenD instances and assign different listening ports to each instance.
+
+Official OpenD startup docs:
+- Visual OpenD: https://openapi.futunn.com/futu-api-doc/quick/opend-base.html
+- Command Line OpenD: https://openapi.futunn.com/futu-api-doc/opend/opend-cmd.html
+
 Example install command:
 
 ```bash
