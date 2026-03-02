@@ -3,3 +3,5 @@ matplotlib
 mplcursors
 numpy
 pytz
+fastapi
+uvicorn

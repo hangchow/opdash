@@ -1,5 +1,7 @@
 # `plot_positions_option.py` Usage Guide
 
+For the web dashboard entry, see [`docs/plot_positions_option_web.md`](plot_positions_option_web.md).
+
 ## Data Source Support
 
 - Currently only supports `futu-api`: https://openapi.futunn.com/futu-api-doc/en/intro/intro.html
