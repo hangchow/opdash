@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from contextlib import ExitStack
 from threading import Event, Lock, Thread
 
@@ -77,6 +78,7 @@ class OptionDashboardBackend:
         self.latest_hover_sig = {}
         self.latest_option_code = {}
         self.latest_price_option_code = {}
+        self.options_done_at_by_port = {}
         self.options_version = 0
         self.price_version = 0
 
@@ -139,6 +141,7 @@ class OptionDashboardBackend:
                     initial_hover_signatures[key] = self.options_hover_signature(options)
                     if stock_code not in initial_price_option_codes and option_code:
                         initial_price_option_codes[stock_code] = option_code
+                self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
 
             price_source_port = self.ports[0]
             price_quote_ctx = self.quote_ctxs[price_source_port]
@@ -217,6 +220,7 @@ class OptionDashboardBackend:
             }
             options_sig_snapshot = dict(self.latest_options_sig)
             hover_sig_snapshot = dict(self.latest_hover_sig)
+            options_done_at_by_port_snapshot = dict(self.options_done_at_by_port)
         with self.version_lock:
             options_version = self.options_version
             price_version = self.price_version
@@ -225,6 +229,7 @@ class OptionDashboardBackend:
             "options": options_snapshot,
             "options_sig": options_sig_snapshot,
             "hover_sig": hover_sig_snapshot,
+            "options_done_at_by_port": options_done_at_by_port_snapshot,
             "options_version": options_version,
             "price_version": price_version,
         }
@@ -317,6 +322,7 @@ class OptionDashboardBackend:
                             self.latest_option_code,
                             self.port_count,
                         )
+                    self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
 
                 with self.version_lock:
                     self.options_version += 1

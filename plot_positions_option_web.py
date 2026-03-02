@@ -199,10 +199,11 @@ def build_uvicorn_log_config():
     }
 
 
-def build_web_snapshot(backend, ui_interval):
+def build_web_snapshot(backend, ui_interval, server_settings=None):
     state = backend.get_state_snapshot()
     prices_snapshot = state["prices"]
     options_snapshot = state["options"]
+    options_done_at_by_port = state.get("options_done_at_by_port", {})
     options_version = state["options_version"]
     price_version = state["price_version"]
 
@@ -235,11 +236,13 @@ def build_web_snapshot(backend, ui_interval):
             "options": options_version,
             "price": price_version,
         },
+        "options_done_at_by_port": options_done_at_by_port,
+        "server_settings": server_settings or {},
         "panels": panels,
     }
 
 
-def create_app(backend, ui_interval):
+def create_app(backend, ui_interval, server_settings=None):
     app = FastAPI(title="Option Dashboard Web")
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
@@ -249,7 +252,7 @@ def create_app(backend, ui_interval):
 
     @app.get("/api/snapshot")
     def snapshot():
-        return JSONResponse(build_web_snapshot(backend, ui_interval))
+        return JSONResponse(build_web_snapshot(backend, ui_interval, server_settings))
 
     @app.get("/healthz")
     def healthz():
@@ -260,6 +263,18 @@ def create_app(backend, ui_interval):
 
 def main():
     args = parse_args()
+    server_settings = {
+        "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "stock_codes": args["stock_codes"],
+        "futu_host": args["host"],
+        "futu_ports": args["ports"],
+        "poll_interval": args["poll_interval"],
+        "price_interval": args["price_interval"],
+        "ui_interval": args["ui_interval"],
+        "price_mode": args["price_mode"],
+        "web_host": args["web_host"],
+        "web_port": args["web_port"],
+    }
     backend = OptionDashboardBackend(
         stock_codes=args["stock_codes"],
         host=args["host"],
@@ -287,7 +302,7 @@ def main():
 
     try:
         backend.start()
-        app = create_app(backend, args["ui_interval"])
+        app = create_app(backend, args["ui_interval"], server_settings=server_settings)
         logger.info(
             "Web server listening at http://%s:%s",
             args["web_host"],

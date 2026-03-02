@@ -1,9 +1,104 @@
 let initialized = false;
 let refreshTimer = null;
 let refreshMs = 1000;
+const fullscreenState = {
+  card: null,
+  chartId: null,
+  button: null,
+  backdrop: null,
+};
 
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function maximizeButtonIcon() {
+  return `
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path
+        d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  `;
+}
+
+function resizeChart(chartId) {
+  const chartEl = document.getElementById(chartId);
+  if (!chartEl || !window.Plotly || !window.Plotly.Plots) {
+    return;
+  }
+  window.Plotly.Plots.resize(chartEl);
+}
+
+function exitFullscreenCard() {
+  if (!fullscreenState.card) {
+    return;
+  }
+  fullscreenState.card.classList.remove("card-fullscreen");
+  if (fullscreenState.button) {
+    fullscreenState.button.classList.remove("is-active");
+    fullscreenState.button.title = "Maximize chart";
+    fullscreenState.button.setAttribute("aria-label", "Maximize chart");
+  }
+  if (fullscreenState.backdrop && fullscreenState.backdrop.parentNode) {
+    fullscreenState.backdrop.parentNode.removeChild(fullscreenState.backdrop);
+  }
+  document.body.classList.remove("chart-fullscreen-active");
+  const chartId = fullscreenState.chartId;
+  fullscreenState.card = null;
+  fullscreenState.chartId = null;
+  fullscreenState.button = null;
+  fullscreenState.backdrop = null;
+  requestAnimationFrame(() => resizeChart(chartId));
+}
+
+function enterFullscreenCard(card, chartId, button) {
+  if (fullscreenState.card === card) {
+    return;
+  }
+  exitFullscreenCard();
+  const backdrop = document.createElement("div");
+  backdrop.className = "chart-backdrop";
+  backdrop.addEventListener("click", () => exitFullscreenCard());
+  document.body.appendChild(backdrop);
+  document.body.classList.add("chart-fullscreen-active");
+  card.classList.add("card-fullscreen");
+  button.classList.add("is-active");
+  button.title = "Exit fullscreen";
+  button.setAttribute("aria-label", "Exit fullscreen");
+  fullscreenState.card = card;
+  fullscreenState.chartId = chartId;
+  fullscreenState.button = button;
+  fullscreenState.backdrop = backdrop;
+  requestAnimationFrame(() => resizeChart(chartId));
+}
+
+function toggleFullscreenCard(card, chartId, button) {
+  if (fullscreenState.card === card) {
+    exitFullscreenCard();
+    return;
+  }
+  enterFullscreenCard(card, chartId, button);
+}
+
+function createFullscreenButton(card, chartId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "card-fullscreen-btn";
+  button.title = "Maximize chart";
+  button.setAttribute("aria-label", "Maximize chart");
+  button.innerHTML = maximizeButtonIcon();
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleFullscreenCard(card, chartId, button);
+  });
+  return button;
 }
 
 function updateLegend(threshold) {
@@ -16,7 +111,24 @@ function updateLegend(threshold) {
     `Shape: circle=CALL, triangle=PUT | Edge color: green=SHORT, pink=LONG | Filled marker: profit% >= ${shown}`;
 }
 
+function updateServerSettings(snapshot) {
+  const el = document.getElementById("server-settings");
+  if (!el) {
+    return;
+  }
+  const s = snapshot.server_settings || {};
+  const stockCodes = Array.isArray(s.stock_codes) ? s.stock_codes.join(",") : "-";
+  const futuPorts = Array.isArray(s.futu_ports) ? s.futu_ports.join(",") : "-";
+  const startedAt = s.started_at ? new Date(s.started_at).toLocaleString() : "-";
+  el.textContent =
+    `server settings: started_at=${startedAt} | stock_codes=${stockCodes} | ` +
+    `futu_host=${s.futu_host ?? "-"} futu_ports=${futuPorts} | ` +
+    `poll_interval=${s.poll_interval ?? "-"}s price_interval=${s.price_interval ?? "-"}s ui_interval=${s.ui_interval ?? "-"}s | ` +
+    `price_mode=${s.price_mode ?? "-"} | web=${s.web_host ?? "-"}:${s.web_port ?? "-"}`;
+}
+
 function buildGrid(snapshot) {
+  exitFullscreenCard();
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
   const cols = Math.max(1, snapshot.ports.length);
@@ -35,6 +147,7 @@ function buildGrid(snapshot) {
       const chart = document.createElement("div");
       chart.className = "chart";
       chart.id = panelId(portIndex, stockCode);
+      card.appendChild(createFullscreenButton(card, chart.id));
       card.appendChild(chart);
       grid.appendChild(card);
       if (panel) {
@@ -186,6 +299,23 @@ function ensureRefreshTimer(snapshot) {
   refreshTimer = setInterval(refresh, refreshMs);
 }
 
+function formatOptionsDoneTimes(snapshot) {
+  const doneByPort = snapshot.options_done_at_by_port || {};
+  const ports = snapshot.ports || [];
+  const parts = ports.map((port) => {
+    const iso = doneByPort[String(port)] ?? doneByPort[port];
+    if (!iso) {
+      return `${port}:-`;
+    }
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) {
+      return `${port}:-`;
+    }
+    return `${port}:${dt.toLocaleTimeString()}`;
+  });
+  return parts.join(", ");
+}
+
 async function refresh() {
   try {
     const resp = await fetch("/api/snapshot", { cache: "no-store" });
@@ -196,6 +326,7 @@ async function refresh() {
 
     ensureRefreshTimer(snapshot);
     updateLegend(snapshot.profit_highlight_threshold);
+    updateServerSettings(snapshot);
 
     if (!initialized) {
       buildGrid(snapshot);
@@ -208,8 +339,9 @@ async function refresh() {
 
     const status = document.getElementById("status");
     const generatedAt = new Date(snapshot.generated_at).toLocaleString();
+    const optionsDone = formatOptionsDoneTimes(snapshot);
     status.textContent =
-      `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | mode=${snapshot.price_mode}`;
+      `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | options_done=${optionsDone}`;
   } catch (err) {
     const status = document.getElementById("status");
     status.textContent = `refresh failed: ${err}`;
@@ -217,3 +349,9 @@ async function refresh() {
 }
 
 refresh();
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    exitFullscreenCard();
+  }
+});
