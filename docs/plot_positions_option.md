@@ -1,5 +1,9 @@
 # `plot_positions_option.py` Usage Guide
 
+## Data Source Support
+
+- Currently only supports `futu-api`: https://openapi.futunn.com/futu-api-doc/en/intro/intro.html
+
 ## Overview
 
 `plot_positions_option.py` opens a live Matplotlib window to visualize your **option positions**.

@@ -6,7 +6,11 @@ Options position dashboard and plotting tool.
 
 - `plot_positions_option.py`: main visualization script
 - `options.py`, `positions.py`, `stocks.py`: required local modules
-- `docs/plot_positions_option.md`: usage guide
+- [`docs/plot_positions_option.md`](docs/plot_positions_option.md): usage guide
+
+## Data Source Support
+
+- Currently only supports `futu-api`: https://openapi.futunn.com/futu-api-doc/en/intro/intro.html
 
 ## Quick Start
 
