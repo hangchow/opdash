@@ -20,7 +20,7 @@ For each stock:
 - Marker size grows with contract count
 - Filled markers mean `pl_ratio >= 80%`
 - A single in-chart legend (upper-left panel) explains shape/color semantics
-- A red dashed horizontal line shows the inferred underlying stock price
+- A red dashed horizontal line shows the underlying stock price
 
 If you pass two ports, charts are shown side by side (one column per port) for comparison.
 
@@ -44,7 +44,7 @@ pip install futu-api matplotlib mplcursors numpy
 ## Command Syntax
 
 ```bash
-python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC]
+python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE]
 ```
 
 ### Required argument
@@ -73,6 +73,15 @@ python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--po
 - `--ui_interval`  
   UI refresh interval (seconds). Default: `5`
 
+- `--price_mode`
+  Price source mode for red baseline. Default: `implied`
+  - `auto`: choose from `pre_price/last_price/after_price/overnight_price` by US market state, then fallback to implied-from-option when unavailable
+  - `last`: use regular last price, then fallback to implied
+  - `pre`: prefer pre-market price, then fallback
+  - `after`: prefer after-hours price, then fallback
+  - `overnight`: prefer overnight price, then fallback
+  - `implied`: only use implied-from-option (legacy behavior)
+
 ## Quick Start Examples
 
 Single stock, single port:
@@ -91,6 +100,18 @@ Compare two ports side by side:
 
 ```bash
 python plot_positions_option.py "US.AAPL,US.TSLA" --host 127.0.0.1 --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 1
+```
+
+Use default mode (`implied`) for best compatibility:
+
+```bash
+python plot_positions_option.py US.AAPL
+```
+
+Prefer pre-market / after-hours price when available:
+
+```bash
+python plot_positions_option.py US.AAPL --price_mode auto
 ```
 
 Show built-in help:
@@ -119,3 +140,4 @@ python plot_positions_option.py -h
 
 - Trading context is created for the US market in current code.
 - Profit highlight threshold is fixed at `80.0` in the script.
+- If your Futu quote permission cannot provide extended-session fields, the script automatically falls back to implied-from-option price.

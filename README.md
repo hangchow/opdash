@@ -20,3 +20,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python plot_positions_option.py -h
 ```
+
+Default price baseline mode is `implied` (works without paid US stock quote permission):
+
+```bash
+python plot_positions_option.py US.AAPL
+```
+
+If you have extended-hours quote permission, you can switch to:
+
+```bash
+python plot_positions_option.py US.AAPL --price_mode auto
+```

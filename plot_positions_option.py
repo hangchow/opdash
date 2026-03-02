@@ -29,6 +29,10 @@ HOLLOW_FACE_COLOR = (0.0, 0.0, 0.0, 0.0)       # Hollow marker fill
 SIDE_SHORT = "SHORT"
 SIDE_LONG = "LONG"
 _last_profit_hit_codes = {}
+US_PRE_MARKET_STATES = {"PRE_MARKET_BEGIN"}
+US_REGULAR_MARKET_STATES = {"AFTERNOON"}
+US_AFTER_HOURS_STATES = {"AFTER_HOURS_BEGIN"}
+US_OVERNIGHT_STATES = {"OVERNIGHT", "AFTER_HOURS_END"}
 
 # 本脚本不再依赖 futu.yaml，改用命令行指定 host/port
 logging.basicConfig(
@@ -104,6 +108,38 @@ def _infer_stock_price(strike_price, option_price, premium, option_type):
     if abs(denominator) < 1e-9:
         return None
     return (strike + price) / denominator
+
+
+def _price_fields_by_mode(price_mode, market_state=None):
+    mode = (price_mode or "implied").lower()
+    if mode == "implied":
+        return []
+    if mode == "last":
+        return ["last_price"]
+    if mode == "pre":
+        return ["pre_price", "last_price"]
+    if mode == "after":
+        return ["after_price", "last_price"]
+    if mode == "overnight":
+        return ["overnight_price", "after_price", "last_price"]
+    state = str(market_state or "").upper()
+    if state in US_PRE_MARKET_STATES:
+        return ["pre_price", "last_price", "after_price", "overnight_price"]
+    if state in US_REGULAR_MARKET_STATES:
+        return ["last_price", "pre_price", "after_price", "overnight_price"]
+    if state in US_AFTER_HOURS_STATES:
+        return ["after_price", "last_price", "overnight_price", "pre_price"]
+    if state in US_OVERNIGHT_STATES:
+        return ["overnight_price", "after_price", "last_price", "pre_price"]
+    return ["last_price", "pre_price", "after_price", "overnight_price"]
+
+
+def _pick_price_from_snapshot(data, fields):
+    for field in fields:
+        price = _safe_float(data.get(field), None)
+        if price is not None and price > 0:
+            return price
+    return None
 
 @contextmanager
 def safe_quote_ctx(host, port):
@@ -219,6 +255,16 @@ def parse_args():
         default=5,
         help="ui refresh interval seconds (default: 5)",
     )
+    parser.add_argument(
+        "--price_mode",
+        metavar="",
+        choices=["auto", "last", "pre", "after", "overnight", "implied"],
+        default="implied",
+        help=(
+            "price source mode: auto/last/pre/after/overnight/implied "
+            "(default: implied)"
+        ),
+    )
 
     # 覆写 error 方法，输出错误信息后退出
     def custom_error(message):
@@ -247,7 +293,8 @@ def parse_args():
     poll_interval = args.poll_interval
     price_interval = args.price_interval
     ui_interval = args.ui_interval
-    return stock_codes, host, ports, poll_interval, price_interval, ui_interval
+    price_mode = args.price_mode
+    return stock_codes, host, ports, poll_interval, price_interval, ui_interval, price_mode
 
 def _get_options_map_from_positions(positions, stock_codes):
     # 单次遍历持仓快照，按标的聚合期权，避免“每个标的都全表扫描”
@@ -342,8 +389,8 @@ def get_stock_data(quote_ctx, stock_code, option_code, max_retries=999, quote_lo
         retries += 1
     raise Exception(f"Failed to get_market_snapshot({option_code}) after {max_retries} retries")
 
-def _get_stock_prices_batch(quote_ctx, option_code_snapshot, quote_lock=None):
-    # 批量用期权快照反推标的价格，减少接口调用次数，并记录耗时
+def _get_stock_prices_from_options_batch(quote_ctx, option_code_snapshot, quote_lock=None):
+    # 批量用期权快照反推标的价格（implied），减少接口调用次数，并记录耗时
     t0 = time.perf_counter()  # 计时起点
     prices = {}
     option_to_stock = {}
@@ -383,6 +430,102 @@ def _get_stock_prices_batch(quote_ctx, option_code_snapshot, quote_lock=None):
             prices[stock_code] = stock_price
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.debug(f"get_market_snapshot batch done: codes={len(option_codes)}, cost={elapsed_ms:.1f}ms")
+    return prices
+
+
+def _get_us_market_state(quote_ctx, quote_lock=None):
+    # 用于 auto 模式下选择盘前/常规/盘后/夜盘字段优先级
+    if quote_lock is None:
+        ret_code, data = quote_ctx.get_global_state()
+    else:
+        with quote_lock:
+            ret_code, data = quote_ctx.get_global_state()
+    if ret_code != RET_OK:
+        logger.debug(f"get_global_state failed: {ret_code}, {data}")
+        return None
+    if isinstance(data, dict):
+        return data.get("us_market_state") or data.get("market_us")
+    return None
+
+
+def _get_stock_prices_from_snapshot_batch(
+    quote_ctx, stock_codes, price_mode="implied", market_state=None, quote_lock=None
+):
+    # 批量从正股快照读取价格字段（last/pre/after/overnight）
+    prices = {}
+    unique_codes = list(dict.fromkeys(code for code in stock_codes if code))
+    if not unique_codes:
+        return prices
+    fields = _price_fields_by_mode(price_mode, market_state=market_state)
+    if not fields:
+        return prices
+    t0 = time.perf_counter()
+    logger.debug(
+        f"get_market_snapshot stock prices start: codes={len(unique_codes)}, "
+        f"mode={price_mode}, market_state={market_state}, fields={fields}"
+    )
+    page_size = 300
+    for offset in range(0, len(unique_codes), page_size):
+        page_codes = unique_codes[offset:offset + page_size]
+        if quote_lock is None:
+            ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+        else:
+            with quote_lock:
+                ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+        if ret_code != RET_OK:
+            logger.error(f"get_market_snapshot stock prices failed: {ret_code}, {datas}")
+            continue
+        for _, data in datas.iterrows():
+            code = data.get("code")
+            if not code:
+                continue
+            price = _pick_price_from_snapshot(data, fields)
+            if price is None:
+                continue
+            prices[code] = price
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    logger.debug(
+        f"get_market_snapshot stock prices done: codes={len(unique_codes)}, "
+        f"matched={len(prices)}, cost={elapsed_ms:.1f}ms"
+    )
+    return prices
+
+
+def _get_stock_prices_with_fallback(
+    quote_ctx, stock_codes, option_code_snapshot, price_mode="implied", quote_lock=None
+):
+    # 先取正股快照（支持盘前/盘后字段），缺失时回退到期权 implied 价格
+    prices = {}
+    if price_mode != "implied":
+        market_state = None
+        if price_mode == "auto":
+            market_state = _get_us_market_state(quote_ctx, quote_lock=quote_lock)
+        prices = _get_stock_prices_from_snapshot_batch(
+            quote_ctx,
+            stock_codes,
+            price_mode=price_mode,
+            market_state=market_state,
+            quote_lock=quote_lock,
+        )
+    missing_codes = [code for code in stock_codes if code not in prices]
+    if not missing_codes:
+        return prices
+    missing_option_snapshot = {
+        stock_code: option_code_snapshot.get(stock_code)
+        for stock_code in missing_codes
+        if option_code_snapshot.get(stock_code)
+    }
+    if not missing_option_snapshot:
+        return prices
+    implied_prices = _get_stock_prices_from_options_batch(
+        quote_ctx, missing_option_snapshot, quote_lock=quote_lock
+    )
+    if implied_prices:
+        logger.debug(
+            f"price fallback implied used: mode={price_mode}, "
+            f"missing={len(missing_codes)}, recovered={len(implied_prices)}"
+        )
+        prices.update(implied_prices)
     return prices
 
 
@@ -842,7 +985,15 @@ def maximize_figure_window(fig):
 
 
 if __name__ == "__main__":
-    stock_codes_str, host, ports, poll_interval, price_interval, ui_interval = parse_args()
+    (
+        stock_codes_str,
+        host,
+        ports,
+        poll_interval,
+        price_interval,
+        ui_interval,
+        price_mode,
+    ) = parse_args()
     # 支持 "US.AAPL, US.TSLA" 这类输入，去掉空格并过滤空项
     stock_codes = [s.strip() for s in stock_codes_str.split(",") if s.strip()]
     if not stock_codes:
@@ -919,9 +1070,11 @@ if __name__ == "__main__":
             price_source_port = ports[0]
             price_quote_ctx = quote_ctxs[price_source_port]
             price_quote_lock = quote_locks[price_source_port]
-            initial_prices = _get_stock_prices_batch(
+            initial_prices = _get_stock_prices_with_fallback(
                 price_quote_ctx,
+                stock_codes,
                 initial_price_option_codes,
+                price_mode=price_mode,
                 quote_lock=price_quote_lock,
             )
 
@@ -1000,8 +1153,12 @@ if __name__ == "__main__":
                                 for stock_code, option_code in latest_price_option_code.items()
                                 if option_code
                             }
-                        prices = _get_stock_prices_batch(
-                            price_quote_ctx, option_code_snapshot, quote_lock=price_quote_lock
+                        prices = _get_stock_prices_with_fallback(
+                            price_quote_ctx,
+                            stock_codes,
+                            option_code_snapshot,
+                            price_mode=price_mode,
+                            quote_lock=price_quote_lock,
                         )
                         if prices:
                             with price_lock:
