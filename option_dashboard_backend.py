@@ -23,6 +23,8 @@ class OptionDashboardBackend:
         get_option_quotes_batch,
         merge_option_quotes,
         get_stock_prices_with_fallback,
+        get_stock_share_delta_map,
+        get_options_delta_sum,
         options_signature,
         options_hover_signature,
         panel_key,
@@ -49,6 +51,8 @@ class OptionDashboardBackend:
         self.get_option_quotes_batch = get_option_quotes_batch
         self.merge_option_quotes = merge_option_quotes
         self.get_stock_prices_with_fallback = get_stock_prices_with_fallback
+        self.get_stock_share_delta_map = get_stock_share_delta_map
+        self.get_options_delta_sum = get_options_delta_sum
         self.options_signature = options_signature
         self.options_hover_signature = options_hover_signature
         self.panel_key = panel_key
@@ -78,6 +82,7 @@ class OptionDashboardBackend:
         self.latest_hover_sig = {}
         self.latest_option_code = {}
         self.latest_price_option_code = {}
+        self.latest_delta_sum_by_panel = {}
         self.options_done_at_by_port = {}
         self.options_version = 0
         self.price_version = 0
@@ -101,6 +106,7 @@ class OptionDashboardBackend:
             initial_plot_signatures = {}
             initial_hover_signatures = {}
             initial_price_option_codes = {}
+            initial_delta_sum_by_panel = {}
 
             for port_index, port in enumerate(self.ports):
                 trade_ctx = self.trade_ctxs[port]
@@ -130,6 +136,10 @@ class OptionDashboardBackend:
                 )
                 for options in options_snapshot.values():
                     self.merge_option_quotes(options, option_quotes)
+                stock_share_delta_map = self.get_stock_share_delta_map(
+                    positions_snapshot,
+                    self.stock_codes,
+                )
 
                 for stock_code in self.stock_codes:
                     key = self.panel_key(port_index, stock_code)
@@ -139,6 +149,10 @@ class OptionDashboardBackend:
                     initial_option_code_by_panel[key] = option_code
                     initial_plot_signatures[key] = self.options_signature(options)
                     initial_hover_signatures[key] = self.options_hover_signature(options)
+                    initial_delta_sum_by_panel[key] = (
+                        stock_share_delta_map.get(stock_code, 0.0)
+                        + self.get_options_delta_sum(options)
+                    )
                     if stock_code not in initial_price_option_codes and option_code:
                         initial_price_option_codes[stock_code] = option_code
                 self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
@@ -161,6 +175,7 @@ class OptionDashboardBackend:
                 self.latest_option_code = dict(initial_option_code_by_panel)
                 self.latest_options_sig = dict(initial_plot_signatures)
                 self.latest_hover_sig = dict(initial_hover_signatures)
+                self.latest_delta_sum_by_panel = dict(initial_delta_sum_by_panel)
                 for stock_code in self.stock_codes:
                     self.latest_price_option_code[stock_code] = self.pick_price_option_code(
                         stock_code,
@@ -220,6 +235,7 @@ class OptionDashboardBackend:
             }
             options_sig_snapshot = dict(self.latest_options_sig)
             hover_sig_snapshot = dict(self.latest_hover_sig)
+            delta_sum_by_panel_snapshot = dict(self.latest_delta_sum_by_panel)
             options_done_at_by_port_snapshot = dict(self.options_done_at_by_port)
         with self.version_lock:
             options_version = self.options_version
@@ -229,6 +245,7 @@ class OptionDashboardBackend:
             "options": options_snapshot,
             "options_sig": options_sig_snapshot,
             "hover_sig": hover_sig_snapshot,
+            "delta_sum_by_panel": delta_sum_by_panel_snapshot,
             "options_done_at_by_port": options_done_at_by_port_snapshot,
             "options_version": options_version,
             "price_version": price_version,
@@ -297,6 +314,10 @@ class OptionDashboardBackend:
                 )
                 for options in options_snapshot.values():
                     self.merge_option_quotes(options, option_quotes)
+                stock_share_delta_map = self.get_stock_share_delta_map(
+                    positions_snapshot,
+                    self.stock_codes,
+                )
 
                 options_sig_snapshot = {
                     stock_code: self.options_signature(options)
@@ -315,6 +336,10 @@ class OptionDashboardBackend:
                         self.latest_option_code[key] = option_code_snapshot.get(stock_code)
                         self.latest_options_sig[key] = options_sig_snapshot.get(stock_code, ())
                         self.latest_hover_sig[key] = hover_sig_snapshot.get(stock_code, ())
+                        self.latest_delta_sum_by_panel[key] = (
+                            stock_share_delta_map.get(stock_code, 0.0)
+                            + self.get_options_delta_sum(options)
+                        )
 
                     for stock_code in self.stock_codes:
                         self.latest_price_option_code[stock_code] = self.pick_price_option_code(

@@ -34,6 +34,8 @@ from option_dashboard_core import (
     _query_positions_with_log,
     _safe_float,
     get_options_map,
+    get_options_delta_sum,
+    get_stock_share_delta_map,
     parse_ports_arg,
     safe_quote_ctx,
     safe_trade_ctx,
@@ -454,6 +456,8 @@ if __name__ == "__main__":
         get_option_quotes_batch=_get_option_quotes_batch,
         merge_option_quotes=_merge_option_quotes,
         get_stock_prices_with_fallback=_get_stock_prices_with_fallback,
+        get_stock_share_delta_map=get_stock_share_delta_map,
+        get_options_delta_sum=get_options_delta_sum,
         options_signature=_options_signature,
         options_hover_signature=_options_hover_signature,
         panel_key=_panel_key,
@@ -472,6 +476,7 @@ if __name__ == "__main__":
         initial_plot_signatures = backend_state["options_sig"]
         initial_hover_signatures = backend_state["hover_sig"]
         initial_prices = backend_state["prices"]
+        initial_delta_sum_by_panel = backend_state.get("delta_sum_by_panel", {})
 
         base_lines = {}
         plot_states = {}
@@ -483,12 +488,13 @@ if __name__ == "__main__":
                 ax = axs[row_index][port_index]
                 options = initial_options_by_panel.get(key, [])
                 stock_price = initial_prices.get(stock_code)
+                delta_sum = _safe_float(initial_delta_sum_by_panel.get(key), 0.0)
 
                 if not options:
                     logger.warning(f"No option positions for {stock_code} on port {port}.")
                     ax.set_xlabel("Strike Date")
                     ax.set_ylabel("Strike Price")
-                    ax.set_title(_panel_title(stock_code, port))
+                    ax.set_title(_panel_title(stock_code, port, delta_sum=delta_sum))
                     base_lines[key] = (None, None)
                     plot_states[key] = None
                     continue
@@ -498,7 +504,7 @@ if __name__ == "__main__":
                     options,
                     stock_code,
                     stock_price,
-                    chart_title=_panel_title(stock_code, port),
+                    chart_title=_panel_title(stock_code, port, delta_sum=delta_sum),
                     show_legend=not legend_state["drawn"],
                 )
                 legend_state["drawn"] = True
@@ -513,6 +519,10 @@ if __name__ == "__main__":
 
         last_drawn_options = dict(initial_plot_signatures)
         last_hover_options = dict(initial_hover_signatures)
+        last_drawn_delta_sum = {
+            key: _safe_float(delta, 0.0)
+            for key, delta in initial_delta_sum_by_panel.items()
+        }
         last_handled_options_version = {"value": -1}
         last_handled_price_version = {"value": -1}
 
@@ -527,6 +537,7 @@ if __name__ == "__main__":
             latest_options_snapshot = backend_state["options"]
             latest_options_sig_snapshot = backend_state["options_sig"]
             latest_hover_sig_snapshot = backend_state["hover_sig"]
+            latest_delta_sum_snapshot = backend_state.get("delta_sum_by_panel", {})
             latest_options_version = backend_state["options_version"]
             latest_price_version = backend_state["price_version"]
             try:
@@ -535,6 +546,15 @@ if __name__ == "__main__":
                     for port_index, port in enumerate(ports):
                         for row_index, stock_code in enumerate(stock_codes):
                             key = _panel_key(port_index, stock_code)
+                            ax = axs[row_index][port_index]
+                            delta_sum = _safe_float(latest_delta_sum_snapshot.get(key), 0.0)
+                            prev_delta_sum = _safe_float(last_drawn_delta_sum.get(key), 0.0)
+                            if round(prev_delta_sum, 3) != round(delta_sum, 3):
+                                ax.set_title(
+                                    _panel_title(stock_code, port, delta_sum=delta_sum)
+                                )
+                                last_drawn_delta_sum[key] = delta_sum
+                                need_redraw = True
                             if key not in latest_options_snapshot:
                                 continue
                             options = latest_options_snapshot.get(key, [])
@@ -557,7 +577,6 @@ if __name__ == "__main__":
                                 last_hover_options[key] = hover_signature
                                 continue
 
-                            ax = axs[row_index][port_index]
                             if not options:
                                 if state is not None:
                                     update_plot(ax, options, state)
@@ -579,7 +598,11 @@ if __name__ == "__main__":
                                     options,
                                     stock_code,
                                     None,
-                                    chart_title=_panel_title(stock_code, port),
+                                    chart_title=_panel_title(
+                                        stock_code,
+                                        port,
+                                        delta_sum=delta_sum,
+                                    ),
                                     show_legend=not legend_state["drawn"],
                                 )
                                 legend_state["drawn"] = True

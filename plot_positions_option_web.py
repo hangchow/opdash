@@ -36,6 +36,8 @@ from option_dashboard_core import (
     _safe_float,
     _safe_int,
     get_options_map,
+    get_options_delta_sum,
+    get_stock_share_delta_map,
     parse_ports_arg,
     safe_quote_ctx,
     safe_trade_ctx,
@@ -203,6 +205,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     state = backend.get_state_snapshot()
     prices_snapshot = state["prices"]
     options_snapshot = state["options"]
+    delta_sum_by_panel = state.get("delta_sum_by_panel", {})
     options_done_at_by_port = state.get("options_done_at_by_port", {})
     options_version = state["options_version"]
     price_version = state["price_version"]
@@ -213,12 +216,14 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             key = _panel_key(port_index, stock_code)
             raw_options = options_snapshot.get(key, [])
             options = [_normalize_option(option) for option in raw_options]
+            delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
             panels.append(
                 {
                     "port_index": port_index,
                     "port": port,
                     "stock_code": stock_code,
-                    "title": _panel_title(stock_code, port),
+                    "title": _panel_title(stock_code, port, delta_sum=delta_sum),
+                    "delta_sum": delta_sum,
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
                     "options": options,
@@ -289,6 +294,8 @@ def main():
         get_option_quotes_batch=_get_option_quotes_batch,
         merge_option_quotes=_merge_option_quotes,
         get_stock_prices_with_fallback=_get_stock_prices_with_fallback,
+        get_stock_share_delta_map=get_stock_share_delta_map,
+        get_options_delta_sum=get_options_delta_sum,
         options_signature=_options_signature,
         options_hover_signature=_options_hover_signature,
         panel_key=_panel_key,

@@ -301,17 +301,41 @@ def _query_positions_with_log(trade_ctx, trade_lock=None, purpose=""):
         raise
 
 
+def _build_stock_code_targets(stock_codes):
+    full_code_targets = {}
+    bare_code_targets = {}
+    for stock_code in list(dict.fromkeys(stock_codes)):
+        code_text = str(stock_code).strip().upper()
+        if not code_text:
+            continue
+        bare_code = code_text.split(".")[-1]
+        full_code_targets.setdefault(code_text, []).append(stock_code)
+        bare_code_targets.setdefault(bare_code, []).append(stock_code)
+    return full_code_targets, bare_code_targets
+
+
+def _resolve_stock_targets(raw_code, full_code_targets, bare_code_targets):
+    code_text = str(raw_code).strip().upper()
+    if not code_text:
+        return []
+    targets = full_code_targets.get(code_text)
+    if targets:
+        return targets
+    return bare_code_targets.get(code_text.split(".")[-1], [])
+
+
 def _get_options_map_from_positions(positions, stock_codes):
     # 单次遍历持仓快照，按标的聚合期权，避免“每个标的都全表扫描”
     stock_codes = list(dict.fromkeys(stock_codes))
     options_map = {stock_code: [] for stock_code in stock_codes}
     hit_codes_map = {stock_code: set() for stock_code in stock_codes}
+    full_code_targets, bare_code_targets = _build_stock_code_targets(stock_codes)
+
     if positions is None or positions.empty:
         for stock_code in stock_codes:
             _log_profit_hits(stock_code, set())
         return options_map
 
-    stock_code_set = set(stock_codes)
     for _, position in positions.iterrows():
         code = position["code"]
         count = _safe_int(position.get("qty"), 0)
@@ -321,8 +345,12 @@ def _get_options_map_from_positions(positions, stock_codes):
         code_segs = re.split(r'(\d+)', code)
         if len(code_segs) <= 3:  # not option
             continue
-        stock_code = code_segs[0]
-        if stock_code not in stock_code_set:
+        target_stock_codes = _resolve_stock_targets(
+            code_segs[0],
+            full_code_targets,
+            bare_code_targets,
+        )
+        if not target_stock_codes:
             continue
         if code_segs[2] == 'C':
             option_type = OptionEnum.CALL
@@ -332,9 +360,7 @@ def _get_options_map_from_positions(positions, stock_codes):
             logger.error(f"Unknown option type in code {code}, skip.")
             continue
         pl_ratio = _safe_float(position.get("pl_ratio", 0), 0.0)
-        if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
-            hit_codes_map[stock_code].add(code)
-        options_map[stock_code].append({
+        option_item = {
             "code": code,
             "type": option_type,
             "side": side,
@@ -342,10 +368,73 @@ def _get_options_map_from_positions(positions, stock_codes):
             "strike_price": float(code_segs[3]) / 1000,
             "count": count,
             "pl_ratio": pl_ratio,
-        })
+        }
+        for stock_code in target_stock_codes:
+            if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
+                hit_codes_map[stock_code].add(code)
+            options_map[stock_code].append(dict(option_item))
     for stock_code in stock_codes:
         _log_profit_hits(stock_code, hit_codes_map[stock_code])
     return options_map
+
+
+def get_stock_share_delta_map(positions, stock_codes):
+    # 统计正股仓位 delta（1 股正股按 delta=1）
+    stock_codes = list(dict.fromkeys(stock_codes))
+    stock_delta_map = {stock_code: 0.0 for stock_code in stock_codes}
+    if positions is None or positions.empty:
+        return stock_delta_map
+    full_code_targets, bare_code_targets = _build_stock_code_targets(stock_codes)
+    for _, position in positions.iterrows():
+        code = position.get("code")
+        code_segs = re.split(r'(\d+)', str(code))
+        if len(code_segs) > 3:  # option
+            continue
+        count = _safe_float(position.get("qty"), 0.0)
+        if count == 0:
+            continue
+        target_stock_codes = _resolve_stock_targets(
+            code,
+            full_code_targets,
+            bare_code_targets,
+        )
+        for stock_code in target_stock_codes:
+            stock_delta_map[stock_code] += count
+    return stock_delta_map
+
+
+def _option_type_text(option_type):
+    if option_type == OptionEnum.PUT:
+        return "PUT"
+    if option_type == OptionEnum.CALL:
+        return "CALL"
+    raw = str(option_type).upper()
+    if "PUT" in raw:
+        return "PUT"
+    if "CALL" in raw:
+        return "CALL"
+    return ""
+
+
+def get_options_delta_sum(options):
+    # 参考 turtle/find_positions.py: sum(count * option_delta * contract_size)
+    total_delta = 0.0
+    for option in options or []:
+        count = _safe_int(option.get("count"), 0)
+        if count == 0:
+            continue
+        delta = _safe_float(option.get("delta"), None)
+        if delta is None:
+            continue
+        option_type = _option_type_text(option.get("type"))
+        if count < 0 and delta == 0:
+            # 对齐 turtle 逻辑：短仓且 API 返回 0 delta 时做保守兜底
+            delta = 1.0 if option_type == "CALL" else -1.0
+        contract_size = _safe_int(option.get("contract_size"), 100)
+        if contract_size <= 0:
+            contract_size = 100
+        total_delta += count * delta * contract_size
+    return total_delta
 
 
 def _get_options_from_positions(positions, stock_code):
@@ -542,6 +631,8 @@ def _get_option_quotes_batch(quote_ctx, option_codes, quote_lock=None):
                 "open_interest": _safe_int(
                     data.get("option_open_interest", data.get("open_interest")), None
                 ),
+                "delta": _safe_float(data.get("option_delta"), None),
+                "contract_size": _safe_int(data.get("option_contract_size"), 100),
             }
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.debug(
@@ -559,6 +650,8 @@ def _merge_option_quotes(options, quotes):
         option["ask_price"] = quote.get("ask_price")
         option["volume"] = quote.get("volume")
         option["open_interest"] = quote.get("open_interest")
+        option["delta"] = quote.get("delta")
+        option["contract_size"] = quote.get("contract_size")
 
 
 def _options_signature(options):
@@ -610,8 +703,11 @@ def _panel_key(port_index, stock_code):
     return (port_index, stock_code)
 
 
-def _panel_title(stock_code, port):
-    return f"{stock_code} Option Positions (Port {port})"
+def _panel_title(stock_code, port, delta_sum=None):
+    title = f"{stock_code} Option Positions (Port {port})"
+    if delta_sum is None:
+        return title
+    return f"{title} | delta={_safe_float(delta_sum, 0.0):+.3f}"
 
 
 def _pick_price_option_code(stock_code, option_code_by_panel, port_count):
