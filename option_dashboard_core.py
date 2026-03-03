@@ -26,6 +26,7 @@ US_PRE_MARKET_STATES = {"PRE_MARKET_BEGIN"}
 US_REGULAR_MARKET_STATES = {"AFTERNOON"}
 US_AFTER_HOURS_STATES = {"AFTER_HOURS_BEGIN"}
 US_OVERNIGHT_STATES = {"OVERNIGHT", "AFTER_HOURS_END"}
+DASHBOARD_TITLE = "Option Positions Dashboard"
 
 
 def bind_parser_error_handler(parser):
@@ -185,6 +186,122 @@ def format_server_settings_text(server_settings, prefix="server settings"):
     if s.get("web_host") is not None or s.get("web_port") is not None:
         parts.append(f"web={s.get('web_host') or '-'}:{s.get('web_port') or '-'}")
     return " | ".join(parts)
+
+
+def get_dashboard_title():
+    return DASHBOARD_TITLE
+
+
+def _coerce_datetime(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = f"{raw[:-1]}+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_display_datetime(value):
+    dt = _coerce_datetime(value)
+    if dt is None:
+        return "-"
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _format_display_time(value):
+    dt = _coerce_datetime(value)
+    if dt is None:
+        return "-"
+    return dt.astimezone().strftime("%H:%M:%S")
+
+
+def _format_interval_seconds(value):
+    if value is None:
+        return "-"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if not np.isfinite(number):
+        return "-"
+    if abs(number - int(number)) < 1e-9:
+        return f"{int(number)}s"
+    return f"{number:g}s"
+
+
+def format_options_done_text(ports, options_done_at_by_port):
+    ports_list = list(ports or [])
+    if not ports_list:
+        return "-"
+    done_map = options_done_at_by_port or {}
+    parts = []
+    for port in ports_list:
+        done_value = done_map.get(str(port))
+        if done_value is None:
+            done_value = done_map.get(port)
+        parts.append(f"{port}:{_format_display_time(done_value)}")
+    return ", ".join(parts)
+
+
+def format_dashboard_status_text(
+    *,
+    generated_at,
+    ui_interval,
+    options_version,
+    price_version,
+    ports,
+    options_done_at_by_port,
+):
+    generated_at_text = _format_display_datetime(generated_at)
+    ui_interval_text = _format_interval_seconds(ui_interval)
+    options_version_text = "-" if options_version is None else str(options_version)
+    price_version_text = "-" if price_version is None else str(price_version)
+    options_done_text = format_options_done_text(ports, options_done_at_by_port)
+    return (
+        f"updated: {generated_at_text} | "
+        f"ui_refresh={ui_interval_text} | "
+        f"options_v={options_version_text} "
+        f"price_v={price_version_text} | "
+        f"options_done={options_done_text}"
+    )
+
+
+def build_dashboard_header_data(
+    *,
+    ui_interval,
+    options_version,
+    price_version,
+    ports,
+    options_done_at_by_port,
+    generated_at=None,
+    title=None,
+):
+    generated_at_iso = generated_at or datetime.now(timezone.utc).isoformat()
+    header_title = title or get_dashboard_title()
+    status_text = format_dashboard_status_text(
+        generated_at=generated_at_iso,
+        ui_interval=ui_interval,
+        options_version=options_version,
+        price_version=price_version,
+        ports=ports,
+        options_done_at_by_port=options_done_at_by_port,
+    )
+    return {
+        "title": header_title,
+        "status_text": status_text,
+        "generated_at": generated_at_iso,
+    }
 
 
 def parse_ports_arg(raw_port, parser, logger_obj=None, max_ports=2):

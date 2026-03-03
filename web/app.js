@@ -111,6 +111,34 @@ function updateLegend(threshold) {
     `Shape: circle=CALL, triangle=PUT | Edge color: green=SHORT, pink=LONG | Filled marker: profit% >= ${shown}`;
 }
 
+function updateHeader(snapshot) {
+  const header = snapshot.header || {};
+  const titleText =
+    typeof header.title === "string" && header.title.trim()
+      ? header.title
+      : "Option Positions Dashboard";
+  const titleEl = document.getElementById("title");
+  if (titleEl) {
+    titleEl.textContent = titleText;
+  }
+  if (titleText) {
+    document.title = titleText;
+  }
+
+  const statusEl = document.getElementById("status");
+  if (!statusEl) {
+    return;
+  }
+  if (typeof header.status_text === "string" && header.status_text.trim()) {
+    statusEl.textContent = header.status_text;
+    return;
+  }
+  const generatedAt = new Date(snapshot.generated_at).toLocaleString();
+  const optionsDone = formatOptionsDoneTimes(snapshot);
+  statusEl.textContent =
+    `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | options_done=${optionsDone}`;
+}
+
 function updateServerSettings(snapshot) {
   const el = document.getElementById("server-settings");
   if (!el) {
@@ -329,6 +357,7 @@ async function refresh() {
     const snapshot = await resp.json();
 
     ensureRefreshTimer(snapshot);
+    updateHeader(snapshot);
     updateLegend(snapshot.profit_highlight_threshold);
     updateServerSettings(snapshot);
 
@@ -341,11 +370,6 @@ async function refresh() {
       });
     }
 
-    const status = document.getElementById("status");
-    const generatedAt = new Date(snapshot.generated_at).toLocaleString();
-    const optionsDone = formatOptionsDoneTimes(snapshot);
-    status.textContent =
-      `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | options_done=${optionsDone}`;
   } catch (err) {
     const status = document.getElementById("status");
     status.textContent = `refresh failed: ${err}`;

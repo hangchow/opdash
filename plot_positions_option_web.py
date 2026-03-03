@@ -19,8 +19,10 @@ from option_dashboard_core import (
     add_dashboard_common_args,
     add_web_server_args,
     bind_parser_error_handler,
+    build_dashboard_header_data,
     build_server_settings,
     format_server_settings_text,
+    get_dashboard_title,
     get_profit_highlight_threshold,
     _fmt_int,
     _fmt_percent,
@@ -234,8 +236,19 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                 }
             )
 
+    generated_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    header = build_dashboard_header_data(
+        generated_at=generated_at,
+        ui_interval=ui_interval,
+        options_version=options_version,
+        price_version=price_version,
+        ports=backend.ports,
+        options_done_at_by_port=options_done_at_by_port,
+    )
+
     return {
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at": generated_at,
+        "header": header,
         "stock_codes": backend.stock_codes,
         "ports": backend.ports,
         "price_mode": backend.price_mode,
@@ -253,7 +266,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
 
 
 def create_app(backend, ui_interval, server_settings=None):
-    app = FastAPI(title="Option Dashboard Web")
+    app = FastAPI(title=get_dashboard_title())
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
     @app.get("/", response_class=FileResponse)

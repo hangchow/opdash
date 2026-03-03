@@ -19,6 +19,7 @@ from option_dashboard_core import (
     SIDE_SHORT,
     add_dashboard_common_args,
     bind_parser_error_handler,
+    build_dashboard_header_data,
     build_server_settings,
     format_server_settings_text,
     get_profit_highlight_threshold,
@@ -423,16 +424,42 @@ def maximize_figure_window(fig):
         logger.debug(f"maximize window skipped: {e}")
 
 
-def _apply_layout_with_footer(fig, footer_text):
-    wrapped_footer = textwrap.fill(
-        footer_text,
-        width=180,
+def _wrap_figure_text(text, width=180):
+    return textwrap.fill(
+        text,
+        width=width,
         break_long_words=False,
         break_on_hyphens=False,
     )
-    line_count = wrapped_footer.count("\n") + 1
-    bottom_margin = min(0.28, 0.03 + line_count * 0.026)
-    fig.tight_layout(rect=(0, bottom_margin, 1, 1))
+
+
+def _apply_layout_with_header_footer(fig, header_title, header_status, footer_text):
+    wrapped_status = _wrap_figure_text(header_status)
+    wrapped_footer = _wrap_figure_text(footer_text)
+    status_line_count = wrapped_status.count("\n") + 1
+    footer_line_count = wrapped_footer.count("\n") + 1
+    top_margin = max(0.82, 0.94 - status_line_count * 0.03)
+    bottom_margin = min(0.28, 0.03 + footer_line_count * 0.026)
+    fig.tight_layout(rect=(0, bottom_margin, 1, top_margin))
+    fig.suptitle(
+        header_title,
+        x=0.01,
+        y=0.992,
+        ha="left",
+        va="top",
+        fontsize=16,
+        fontweight="bold",
+    )
+    status_artist = fig.text(
+        0.01,
+        0.962,
+        wrapped_status,
+        transform=fig.transFigure,
+        ha="left",
+        va="top",
+        fontsize=9,
+        color="#475569",
+    )
     fig.text(
         0.01,
         0.01,
@@ -443,6 +470,7 @@ def _apply_layout_with_footer(fig, footer_text):
         fontsize=9,
         color="#475569",
     )
+    return status_artist
 
 
 if __name__ == "__main__":
@@ -526,6 +554,14 @@ if __name__ == "__main__":
         initial_hover_signatures = backend_state["hover_sig"]
         initial_prices = backend_state["prices"]
         initial_delta_sum_by_panel = backend_state.get("delta_sum_by_panel", {})
+        initial_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
+        initial_header = build_dashboard_header_data(
+            ui_interval=ui_interval,
+            options_version=backend_state["options_version"],
+            price_version=backend_state["price_version"],
+            ports=ports,
+            options_done_at_by_port=initial_options_done_at_by_port,
+        )
 
         base_lines = {}
         plot_states = {}
@@ -562,9 +598,18 @@ if __name__ == "__main__":
                 if base_line is not None and stock_price is not None:
                     last_drawn_prices[key] = stock_price
 
-        _apply_layout_with_footer(fig, startup_footer_text)
+        header_status_artist = _apply_layout_with_header_footer(
+            fig,
+            initial_header["title"],
+            initial_header["status_text"],
+            startup_footer_text,
+        )
         maximize_figure_window(fig)
         fig.canvas.draw()
+        header_state = {
+            "status_text": initial_header["status_text"],
+            "status_artist": header_status_artist,
+        }
 
         last_drawn_options = dict(initial_plot_signatures)
         last_hover_options = dict(initial_hover_signatures)
@@ -587,10 +632,25 @@ if __name__ == "__main__":
             latest_options_sig_snapshot = backend_state["options_sig"]
             latest_hover_sig_snapshot = backend_state["hover_sig"]
             latest_delta_sum_snapshot = backend_state.get("delta_sum_by_panel", {})
+            latest_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
             latest_options_version = backend_state["options_version"]
             latest_price_version = backend_state["price_version"]
             try:
                 need_redraw = False
+                header_data = build_dashboard_header_data(
+                    ui_interval=ui_interval,
+                    options_version=latest_options_version,
+                    price_version=latest_price_version,
+                    ports=ports,
+                    options_done_at_by_port=latest_options_done_at_by_port,
+                )
+                latest_status_text = header_data["status_text"]
+                if latest_status_text != header_state["status_text"]:
+                    header_state["status_artist"].set_text(
+                        _wrap_figure_text(latest_status_text)
+                    )
+                    header_state["status_text"] = latest_status_text
+                    need_redraw = True
                 if latest_options_version != last_handled_options_version["value"]:
                     for port_index, port in enumerate(ports):
                         for row_index, stock_code in enumerate(stock_codes):
