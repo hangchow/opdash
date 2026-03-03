@@ -2,6 +2,7 @@ import logging
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from contextlib import contextmanager
 
 import numpy as np
@@ -123,6 +124,67 @@ def add_web_server_args(parser):
         default=18080,
         help="web server port (default: 18080)",
     )
+
+
+def build_server_settings(
+    *,
+    stock_codes,
+    futu_host,
+    futu_ports,
+    poll_interval,
+    price_interval,
+    ui_interval,
+    price_mode,
+    profit_highlight_threshold,
+    web_host=None,
+    web_port=None,
+    started_at=None,
+):
+    return {
+        "started_at": started_at or datetime.now(timezone.utc).isoformat(),
+        "stock_codes": list(stock_codes or []),
+        "futu_host": futu_host,
+        "futu_ports": list(futu_ports or []),
+        "poll_interval": poll_interval,
+        "price_interval": price_interval,
+        "ui_interval": ui_interval,
+        "price_mode": price_mode,
+        "profit_highlight_threshold": profit_highlight_threshold,
+        "web_host": web_host,
+        "web_port": web_port,
+    }
+
+
+def format_server_settings_text(server_settings, prefix="server settings"):
+    s = server_settings or {}
+    stock_codes = s.get("stock_codes") or []
+    futu_ports = s.get("futu_ports") or []
+    stock_codes_text = ",".join(str(code) for code in stock_codes) if stock_codes else "-"
+    futu_ports_text = ",".join(str(port) for port in futu_ports) if futu_ports else "-"
+    started_at_text = s.get("started_at") or "-"
+    threshold = s.get("profit_highlight_threshold")
+    if threshold is None:
+        threshold_text = "-"
+    else:
+        try:
+            threshold_text = f"{float(threshold):g}"
+        except (TypeError, ValueError):
+            threshold_text = str(threshold)
+    parts = [
+        f"{prefix}: started_at={started_at_text}",
+        f"stock_codes={stock_codes_text}",
+        f"futu_host={s.get('futu_host') or '-'} futu_ports={futu_ports_text}",
+        (
+            f"poll_interval={s.get('poll_interval', '-')}s "
+            f"price_interval={s.get('price_interval', '-')}s "
+            f"ui_interval={s.get('ui_interval', '-')}s"
+        ),
+        f"price_mode={s.get('price_mode') or '-'}",
+        f"profit_highlight_threshold={threshold_text}",
+    ]
+    if s.get("web_host") is not None or s.get("web_port") is not None:
+        parts.append(f"web={s.get('web_host') or '-'}:{s.get('web_port') or '-'}")
+    return " | ".join(parts)
 
 
 def parse_ports_arg(raw_port, parser, logger_obj=None, max_ports=2):

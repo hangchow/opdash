@@ -19,6 +19,8 @@ from option_dashboard_core import (
     add_dashboard_common_args,
     add_web_server_args,
     bind_parser_error_handler,
+    build_server_settings,
+    format_server_settings_text,
     get_profit_highlight_threshold,
     _fmt_int,
     _fmt_percent,
@@ -245,6 +247,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
         },
         "options_done_at_by_port": options_done_at_by_port,
         "server_settings": server_settings or {},
+        "server_settings_text": format_server_settings_text(server_settings) if server_settings else "",
         "panels": panels,
     }
 
@@ -275,19 +278,18 @@ def main():
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
-    server_settings = {
-        "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "stock_codes": args["stock_codes"],
-        "futu_host": args["host"],
-        "futu_ports": args["ports"],
-        "poll_interval": args["poll_interval"],
-        "price_interval": args["price_interval"],
-        "ui_interval": args["ui_interval"],
-        "price_mode": args["price_mode"],
-        "profit_highlight_threshold": args["profit_highlight_threshold"],
-        "web_host": args["web_host"],
-        "web_port": args["web_port"],
-    }
+    server_settings = build_server_settings(
+        stock_codes=args["stock_codes"],
+        futu_host=args["host"],
+        futu_ports=args["ports"],
+        poll_interval=args["poll_interval"],
+        price_interval=args["price_interval"],
+        ui_interval=args["ui_interval"],
+        price_mode=args["price_mode"],
+        profit_highlight_threshold=args["profit_highlight_threshold"],
+        web_host=args["web_host"],
+        web_port=args["web_port"],
+    )
     backend = OptionDashboardBackend(
         stock_codes=args["stock_codes"],
         host=args["host"],

@@ -116,6 +116,10 @@ function updateServerSettings(snapshot) {
   if (!el) {
     return;
   }
+  if (typeof snapshot.server_settings_text === "string" && snapshot.server_settings_text.trim()) {
+    el.textContent = snapshot.server_settings_text;
+    return;
+  }
   const s = snapshot.server_settings || {};
   const stockCodes = Array.isArray(s.stock_codes) ? s.stock_codes.join(",") : "-";
   const futuPorts = Array.isArray(s.futu_ports) ? s.futu_ports.join(",") : "-";

@@ -2,6 +2,7 @@ import argparse
 import datetime
 import logging
 import sys
+import textwrap
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
@@ -18,6 +19,8 @@ from option_dashboard_core import (
     SIDE_SHORT,
     add_dashboard_common_args,
     bind_parser_error_handler,
+    build_server_settings,
+    format_server_settings_text,
     get_profit_highlight_threshold,
     _fmt_int,
     _fmt_percent,
@@ -420,6 +423,28 @@ def maximize_figure_window(fig):
         logger.debug(f"maximize window skipped: {e}")
 
 
+def _apply_layout_with_footer(fig, footer_text):
+    wrapped_footer = textwrap.fill(
+        footer_text,
+        width=180,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    line_count = wrapped_footer.count("\n") + 1
+    bottom_margin = min(0.28, 0.03 + line_count * 0.026)
+    fig.tight_layout(rect=(0, bottom_margin, 1, 1))
+    fig.text(
+        0.01,
+        0.01,
+        wrapped_footer,
+        transform=fig.transFigure,
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color="#475569",
+    )
+
+
 if __name__ == "__main__":
     (
         stock_codes_str,
@@ -440,6 +465,21 @@ if __name__ == "__main__":
     if not stock_codes:
         logger.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")
         sys.exit(1)
+    started_at = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    startup_settings = build_server_settings(
+        started_at=started_at,
+        stock_codes=stock_codes,
+        futu_host=host,
+        futu_ports=ports,
+        poll_interval=poll_interval,
+        price_interval=price_interval,
+        ui_interval=ui_interval,
+        price_mode=price_mode,
+        profit_highlight_threshold=profit_highlight_threshold,
+    )
+    startup_footer_text = format_server_settings_text(
+        startup_settings, prefix="startup args"
+    )
     port_count = len(ports)
     row_count = len(stock_codes)
 
@@ -522,7 +562,7 @@ if __name__ == "__main__":
                 if base_line is not None and stock_price is not None:
                     last_drawn_prices[key] = stock_price
 
-        fig.tight_layout()
+        _apply_layout_with_footer(fig, startup_footer_text)
         maximize_figure_window(fig)
         fig.canvas.draw()
 
