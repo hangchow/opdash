@@ -14,12 +14,12 @@ from option_dashboard_backend import OptionDashboardBackend
 from option_dashboard_core import (
     HOLLOW_FACE_COLOR,
     LONG_POSITION_COLOR,
-    PROFIT_HIGHLIGHT_THRESHOLD,
     SHORT_POSITION_COLOR,
     SIDE_SHORT,
     add_dashboard_common_args,
     add_web_server_args,
     bind_parser_error_handler,
+    get_profit_highlight_threshold,
     _fmt_int,
     _fmt_percent,
     _fmt_price,
@@ -41,6 +41,7 @@ from option_dashboard_core import (
     parse_ports_arg,
     safe_quote_ctx,
     safe_trade_ctx,
+    set_profit_highlight_threshold,
 )
 from options import OptionEnum
 
@@ -84,6 +85,7 @@ def parse_args():
         "price_interval": args.price_interval,
         "ui_interval": args.ui_interval,
         "price_mode": args.price_mode,
+        "profit_highlight_threshold": args.profit_highlight_threshold,
         "web_host": args.web_host,
         "web_port": args.web_port,
     }
@@ -123,7 +125,7 @@ def _normalize_option(option):
     strike_price = _safe_float(option.get("strike_price"), 0.0)
     strike_date_iso = _strike_date_to_iso(option.get("strike_date"))
     pl_ratio = _safe_float(option.get("pl_ratio"), 0.0)
-    profit_hit = pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD
+    profit_hit = pl_ratio >= get_profit_highlight_threshold()
     line_color = SHORT_COLOR if side == SIDE_SHORT else LONG_COLOR
     marker_area = _marker_area(abs_count)
 
@@ -236,7 +238,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
         "ports": backend.ports,
         "price_mode": backend.price_mode,
         "ui_interval": ui_interval,
-        "profit_highlight_threshold": PROFIT_HIGHLIGHT_THRESHOLD,
+        "profit_highlight_threshold": get_profit_highlight_threshold(),
         "versions": {
             "options": options_version,
             "price": price_version,
@@ -268,6 +270,11 @@ def create_app(backend, ui_interval, server_settings=None):
 
 def main():
     args = parse_args()
+    try:
+        set_profit_highlight_threshold(args["profit_highlight_threshold"])
+    except ValueError as e:
+        logger.error("Invalid --profit_highlight_threshold: %s", e)
+        sys.exit(1)
     server_settings = {
         "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "stock_codes": args["stock_codes"],
@@ -277,6 +284,7 @@ def main():
         "price_interval": args["price_interval"],
         "ui_interval": args["ui_interval"],
         "price_mode": args["price_mode"],
+        "profit_highlight_threshold": args["profit_highlight_threshold"],
         "web_host": args["web_host"],
         "web_port": args["web_port"],
     }

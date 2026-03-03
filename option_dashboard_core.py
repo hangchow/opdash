@@ -13,7 +13,8 @@ from positions import query_hold_positions
 
 logger = logging.getLogger("plot_positions_option")
 
-PROFIT_HIGHLIGHT_THRESHOLD = 80.0  # Highlight threshold
+DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD = 80.0
+PROFIT_HIGHLIGHT_THRESHOLD = DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD  # Highlight threshold
 SHORT_POSITION_COLOR = (0.0, 0.6, 0.0, 1.0)    # Green: short
 LONG_POSITION_COLOR = (1.0, 0.41, 0.71, 1.0)   # Pink: long
 HOLLOW_FACE_COLOR = (0.0, 0.0, 0.0, 0.0)       # Hollow marker fill
@@ -84,6 +85,28 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
             "(default: implied)"
         ),
     )
+    parser.add_argument(
+        "--profit_highlight_threshold",
+        metavar="",
+        type=float,
+        default=DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD,
+        help=(
+            "filled marker threshold in percent; "
+            f"default: {DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD:g}"
+        ),
+    )
+
+
+def set_profit_highlight_threshold(value):
+    global PROFIT_HIGHLIGHT_THRESHOLD
+    threshold = float(value)
+    if not np.isfinite(threshold):
+        raise ValueError("profit_highlight_threshold must be finite")
+    PROFIT_HIGHLIGHT_THRESHOLD = threshold
+
+
+def get_profit_highlight_threshold():
+    return PROFIT_HIGHLIGHT_THRESHOLD
 
 
 def add_web_server_args(parser):

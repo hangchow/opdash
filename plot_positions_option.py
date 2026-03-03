@@ -14,11 +14,11 @@ from option_dashboard_backend import OptionDashboardBackend
 from option_dashboard_core import (
     HOLLOW_FACE_COLOR,
     LONG_POSITION_COLOR,
-    PROFIT_HIGHLIGHT_THRESHOLD,
     SHORT_POSITION_COLOR,
     SIDE_SHORT,
     add_dashboard_common_args,
     bind_parser_error_handler,
+    get_profit_highlight_threshold,
     _fmt_int,
     _fmt_percent,
     _fmt_price,
@@ -39,6 +39,7 @@ from option_dashboard_core import (
     parse_ports_arg,
     safe_quote_ctx,
     safe_trade_ctx,
+    set_profit_highlight_threshold,
 )
 from options import OptionEnum
 
@@ -68,6 +69,7 @@ def parse_args():
         args.price_interval,
         args.ui_interval,
         args.price_mode,
+        args.profit_highlight_threshold,
     )
 
 
@@ -106,12 +108,13 @@ def _compute_plot_data(options):
     call_s = []
     call_edgecolors = []
     call_facecolors = []
+    threshold = get_profit_highlight_threshold()
     for option in options:
         count = abs(int(option.get("count", 1)))
         size = 40 + max(0, count - 1) * 20
         strike_dt = datetime.datetime.strptime(option["strike_date"], "%y%m%d")
         pl_ratio = _safe_float(option.get("pl_ratio", 0), 0.0)
-        profit_hit = pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD  # 仅高亮达标点
+        profit_hit = pl_ratio >= threshold  # 仅高亮达标点
         side = _option_side(option)
         edge_color = SHORT_POSITION_COLOR if side == SIDE_SHORT else LONG_POSITION_COLOR
         face_color = edge_color if profit_hit else HOLLOW_FACE_COLOR
@@ -224,7 +227,7 @@ def _add_marker_legend(ax):
         "Long Call",
         "Short Put",
         "Long Put",
-        f"profit% >= {PROFIT_HIGHLIGHT_THRESHOLD:.0f}%",
+        f"profit% >= {get_profit_highlight_threshold():.0f}%",
     ]
     ax.legend(
         handles=legend_handles,
@@ -426,7 +429,13 @@ if __name__ == "__main__":
         price_interval,
         ui_interval,
         price_mode,
+        profit_highlight_threshold,
     ) = parse_args()
+    try:
+        set_profit_highlight_threshold(profit_highlight_threshold)
+    except ValueError as e:
+        logger.error("Invalid --profit_highlight_threshold: %s", e)
+        sys.exit(1)
     stock_codes = [s.strip() for s in stock_codes_str.split(",") if s.strip()]
     if not stock_codes:
         logger.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")

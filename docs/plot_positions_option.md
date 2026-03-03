@@ -20,7 +20,7 @@ For each stock:
   - green = short position
   - pink = long position
 - Marker size grows with contract count
-- Filled markers mean `pl_ratio >= 80%`
+- Filled markers mean `pl_ratio >= profit_highlight_threshold` (default `80%`)
 - A single in-chart legend (upper-left panel) explains shape/color semantics
 - A red dashed horizontal line shows the underlying stock price
 
@@ -53,7 +53,7 @@ pip install futu-api matplotlib mplcursors numpy
 ## Command Syntax
 
 ```bash
-python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE]
+python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT]
 ```
 
 ### Required argument
@@ -91,6 +91,9 @@ python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--po
   - `overnight`: prefer overnight price, then fallback
   - `implied`: only use implied-from-option (legacy behavior)
 
+- `--profit_highlight_threshold`
+  Filled marker threshold percent. Default: `80`
+
 ## Quick Start Examples
 
 Single stock, single port:
@@ -123,6 +126,12 @@ Prefer pre-market / after-hours price when available:
 python plot_positions_option.py US.AAPL --price_mode auto
 ```
 
+Set filled-marker threshold to 70%:
+
+```bash
+python plot_positions_option.py US.AAPL --profit_highlight_threshold 70
+```
+
 Show built-in help:
 
 ```bash
@@ -148,5 +157,5 @@ python plot_positions_option.py -h
 ## Notes
 
 - Trading context is created for the US market in current code.
-- Profit highlight threshold is fixed at `80.0` in the script.
+- Profit highlight threshold defaults to `80.0` and can be changed with `--profit_highlight_threshold`.
 - If your Futu quote permission cannot provide extended-session fields, the script automatically falls back to implied-from-option price.

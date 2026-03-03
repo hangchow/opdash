@@ -10,7 +10,7 @@ Display semantics are aligned with the Matplotlib version:
 - Y-axis: strike price
 - Marker shape: circle = call, triangle = put
 - Marker color: green = short, pink = long
-- Filled markers: `pl_ratio >= 80%`
+- Filled markers: `pl_ratio >= profit_highlight_threshold` (default `80%`)
 - Red dashed horizontal line: underlying stock price baseline
 
 If you provide two Futu ports, the dashboard shows one column per port for side-by-side comparison.
@@ -30,7 +30,7 @@ Both entries now share backend modules, while GUI interaction flow remains uncha
 ## Command Syntax
 
 ```bash
-python plot_positions_option_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--web_host HOST] [--web_port PORT]
+python plot_positions_option_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--web_host HOST] [--web_port PORT]
 ```
 
 ## Arguments
@@ -42,6 +42,7 @@ python plot_positions_option_web.py <stock_codes> [--host HOST] [--port PORTS] [
 - `--price_interval`: price polling interval seconds, default `10`
 - `--ui_interval`: browser refresh interval seconds, default `5`
 - `--price_mode`: `auto|last|pre|after|overnight|implied`, default `implied`
+- `--profit_highlight_threshold`: filled marker threshold percent, default `80`
 - `--web_host`: web server host, default `127.0.0.1`
 - `--web_port`: web server port, default `18080`
 
@@ -63,6 +64,12 @@ Two ports side-by-side:
 
 ```bash
 python plot_positions_option_web.py "US.AAPL,US.TSLA" --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 2
+```
+
+Use 70% as filled-marker threshold:
+
+```bash
+python plot_positions_option_web.py US.AAPL --profit_highlight_threshold 70
 ```
 
 Open the dashboard:
