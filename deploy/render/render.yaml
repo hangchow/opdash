@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: opdash
+    runtime: docker
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    branch: master
+    autoDeploy: true
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STOCK_CODES
+        sync: false
+      - key: FUTU_LOGIN_ACCOUNT
+        sync: false
+      - key: FUTU_LOGIN_PWD
+        sync: false
+      - key: FUTU_LOGIN_PWD_MD5
+        sync: false
+      - key: OPEND_DOWNLOAD_URL
+        sync: false
+      - key: FUTU_API_IP
+        value: "127.0.0.1"
+      - key: FUTU_API_PORT
+        value: "11111"
+      - key: POLL_INTERVAL
+        value: "10"
+      - key: PRICE_INTERVAL
+        value: "10"
+      - key: UI_INTERVAL
+        value: "5"
+      - key: PRICE_MODE
+        value: "implied"
+      - key: PROFIT_HIGHLIGHT_THRESHOLD
+        value: "80"
