@@ -432,6 +432,9 @@ function renderPanel(id, panel) {
       text: y0.toFixed(2),
       showarrow: false,
       font: { color: "red", size: 11 },
+      bgcolor: "#ffffff",
+      borderpad: 1,
+      yshift: 10,
     });
   }
 

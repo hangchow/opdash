@@ -8,6 +8,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import mplcursors
 import numpy as np
+from matplotlib import transforms
 from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
 
@@ -58,6 +59,7 @@ logging.basicConfig(
 Y_RANGE_PAD_RATIO = 0.1
 Y_RANGE_EDGE_TRIGGER_RATIO = 0.1
 Y_RANGE_MIN_PAD = 1.0
+BASE_PRICE_LABEL_YSHIFT_PTS = 10
 
 
 def parse_args():
@@ -500,8 +502,9 @@ def draw_base_line(ax, y, price):
         fontsize=10,
         ha=label_ha,
         va='center',
-        transform=ax.get_yaxis_transform(),
+        transform=_base_price_text_transform(ax),
         clip_on=True,
+        bbox=dict(facecolor='white', edgecolor='none', pad=0.35),
     )
     return line, text
 
@@ -515,6 +518,15 @@ def _base_price_label_anchor(ax):
     return 0.005, "left"
 
 
+def _base_price_text_transform(ax):
+    return transforms.offset_copy(
+        ax.get_yaxis_transform(),
+        fig=ax.figure,
+        y=BASE_PRICE_LABEL_YSHIFT_PTS,
+        units='points',
+    )
+
+
 def move_base_line(ax, line, text, new_y):
     label_x, label_ha = _base_price_label_anchor(ax)
     new_y_round = round(new_y, 2)
@@ -524,6 +536,7 @@ def move_base_line(ax, line, text, new_y):
     line.set_ydata([new_y_round, new_y_round])
     text.set_position((label_x, new_y_round))
     text.set_ha(label_ha)
+    text.set_transform(_base_price_text_transform(ax))
     text.set_text(f"{new_y_round:.2f}")
     return True
 
