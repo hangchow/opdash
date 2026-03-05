@@ -162,7 +162,10 @@ def format_server_settings_text(server_settings, prefix="server settings"):
     futu_ports = s.get("futu_ports") or []
     stock_codes_text = ",".join(str(code) for code in stock_codes) if stock_codes else "-"
     futu_ports_text = ",".join(str(port) for port in futu_ports) if futu_ports else "-"
-    started_at_text = s.get("started_at") or "-"
+    raw_started_at = s.get("started_at")
+    started_at_text = _format_display_datetime(raw_started_at)
+    if started_at_text == "-" and raw_started_at:
+        started_at_text = str(raw_started_at)
     threshold = s.get("profit_highlight_threshold")
     if threshold is None:
         threshold_text = "-"
