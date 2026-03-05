@@ -360,17 +360,17 @@ function renderPanel(id, panel) {
     template: "none",
     title: { text: panel.title, x: 0.5, xanchor: "center", font: { size: 14 } },
     margin: isLeftColumn
-      ? { l: 70, r: 20, t: 58, b: 82 }
-      : { l: 36, r: 70, t: 58, b: 82 },
+      ? { l: 70, r: 20, t: 58, b: 92 }
+      : { l: 36, r: 70, t: 58, b: 92 },
     xaxis: {
-      title: { text: "Strike Date", font: { size: 14 } },
+      title: { text: "Strike Date", font: { size: 14 }, standoff: 10 },
       type: "date",
       tickmode: uniqueDates.length > 0 ? "array" : "auto",
       tickvals: uniqueDates.length > 0 ? uniqueDates : undefined,
       ticktext: uniqueDates.length > 0 ? uniqueDates : undefined,
       range: xRange,
       tickangle: -45,
-      automargin: true,
+      automargin: false,
       tickfont: { size: 12 },
       gridcolor: "#edf2f7",
     },
