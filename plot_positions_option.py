@@ -54,6 +54,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(threadName)s - %(levelname)s - %(message)s"  # 日志以线程名为主，避免 __main__ 噪音
 )
+Y_RANGE_PAD_RATIO = 0.1
+Y_RANGE_EDGE_TRIGGER_RATIO = 0.1
+Y_RANGE_MIN_PAD = 1.0
 
 
 def parse_args():
@@ -159,6 +162,76 @@ def _to_offsets(x_list, y_list):
     if not x_list:
         return np.empty((0, 2))
     return np.column_stack((x_list, y_list))
+
+
+def _compute_panel_y_range(strike_prices, stock_price=None):
+    candidates = []
+    for value in strike_prices or []:
+        num = _safe_float(value, None)
+        if num is None:
+            continue
+        candidates.append(float(num))
+    price_num = _safe_float(stock_price, None)
+    if price_num is not None:
+        candidates.append(float(price_num))
+    if not candidates:
+        return None
+    y_min = min(candidates)
+    y_max = max(candidates)
+    y_pad = max(Y_RANGE_MIN_PAD, (y_max - y_min) * Y_RANGE_PAD_RATIO)
+    return (y_min - y_pad, y_max + y_pad)
+
+
+def _strike_bounds_key(strike_prices):
+    finite_strikes = []
+    for value in strike_prices or []:
+        num = _safe_float(value, None)
+        if num is None:
+            continue
+        finite_strikes.append(float(num))
+    if not finite_strikes:
+        return "none"
+    return f"{min(finite_strikes):.6f}|{max(finite_strikes):.6f}"
+
+
+def _apply_axis_y_range(ax, y_range):
+    if y_range is None:
+        return False
+    curr_min, curr_max = ax.get_ylim()
+    target_min, target_max = y_range
+    if abs(curr_min - target_min) < 1e-9 and abs(curr_max - target_max) < 1e-9:
+        return False
+    ax.set_ylim(target_min, target_max)
+    return True
+
+
+def _is_price_near_or_outside_y_edge(ax, stock_price):
+    price_num = _safe_float(stock_price, None)
+    if price_num is None:
+        return False
+    curr_min, curr_max = ax.get_ylim()
+    y_min, y_max = min(curr_min, curr_max), max(curr_min, curr_max)
+    span = y_max - y_min
+    if span <= 0:
+        return True
+    inner_min = y_min + span * Y_RANGE_EDGE_TRIGGER_RATIO
+    inner_max = y_max - span * Y_RANGE_EDGE_TRIGGER_RATIO
+    return price_num <= inner_min or price_num >= inner_max
+
+
+def _maybe_expand_panel_y_range_for_price(ax, strike_prices, stock_price):
+    if not _is_price_near_or_outside_y_edge(ax, stock_price):
+        return False
+    target_range = _compute_panel_y_range(strike_prices, stock_price)
+    if target_range is None:
+        return False
+    curr_min, curr_max = ax.get_ylim()
+    y_min, y_max = min(curr_min, curr_max), max(curr_min, curr_max)
+    expanded_range = (
+        min(y_min, target_range[0]),
+        max(y_max, target_range[1]),
+    )
+    return _apply_axis_y_range(ax, expanded_range)
 
 
 def _marker_legend_items():
@@ -305,6 +378,7 @@ def plot_chart(
         ax.yaxis.set_label_position("left")
         ax.yaxis.tick_left()
     ax.set_title(chart_title or f"{stock_code} Option Positions")
+    _apply_axis_y_range(ax, _compute_panel_y_range(plot_data["y_all"], stock_price))
 
     state = {
         "call_sc": call_sc,
@@ -312,6 +386,7 @@ def plot_chart(
         "point_counts": point_counts,
         "last_annotation": None,
         "cursor": None,
+        "y_bounds_key": _strike_bounds_key(plot_data["y_all"]),
     }
 
     cursor = mplcursors.cursor([call_sc, put_sc], hover=True)
@@ -354,7 +429,7 @@ def plot_chart(
     return base_line, base_text, state
 
 
-def update_plot(ax, options, state):
+def update_plot(ax, options, state, stock_price=None):
     # 仅更新散点数据与坐标轴，不重建对象
     plot_data = _compute_plot_data(options)
     call_sc = state["call_sc"]
@@ -397,23 +472,28 @@ def update_plot(ax, options, state):
             mdates.num2date(x_max_num + x_pad),
         )
     y_all = plot_data["y_all"]
+    y_bounds_key = _strike_bounds_key(y_all)
     if y_all:
-        y_min, y_max = min(y_all), max(y_all)
-        y_pad = (y_max - y_min) * 0.1 or 1.0
-        ax.set_ylim(y_min - y_pad, y_max + y_pad)
+        target_range = _compute_panel_y_range(y_all, stock_price)
+        if state.get("y_bounds_key") != y_bounds_key:
+            _apply_axis_y_range(ax, target_range)
+        else:
+            _maybe_expand_panel_y_range_for_price(ax, y_all, stock_price)
+    state["y_bounds_key"] = y_bounds_key
 
 
 def draw_base_line(ax, y, price):
     # 绘制当前股价基准线
+    label_x, label_ha = _base_price_label_anchor(ax)
     base_y = round(price, 2)
     line = ax.axhline(y=base_y, color='red', linestyle='--', linewidth=1)
     text = ax.text(
-        0.005,
+        label_x,
         base_y,
         f"{base_y:.2f}",
         color='red',
         fontsize=10,
-        ha='left',
+        ha=label_ha,
         va='center',
         transform=ax.get_yaxis_transform(),
         clip_on=True,
@@ -421,13 +501,24 @@ def draw_base_line(ax, y, price):
     return line, text
 
 
+def _base_price_label_anchor(ax):
+    on_right = ax.yaxis.get_label_position() == "right"
+    if not on_right:
+        on_right = ax.yaxis.get_ticks_position() == "right"
+    if on_right:
+        return 0.995, "right"
+    return 0.005, "left"
+
+
 def move_base_line(ax, line, text, new_y):
+    label_x, label_ha = _base_price_label_anchor(ax)
     new_y_round = round(new_y, 2)
     curr_y = line.get_ydata()[0]
     if round(curr_y, 2) == new_y_round:
         return False
     line.set_ydata([new_y_round, new_y_round])
-    text.set_position((0.005, new_y_round))
+    text.set_position((label_x, new_y_round))
+    text.set_ha(label_ha)
     text.set_text(f"{new_y_round:.2f}")
     return True
 
@@ -586,12 +677,14 @@ if __name__ == "__main__":
         initial_plot_signatures = backend_state["options_sig"]
         initial_hover_signatures = backend_state["hover_sig"]
         initial_prices = backend_state["prices"]
+        initial_price_done_at = backend_state.get("price_done_at")
         initial_delta_sum_by_panel = backend_state.get("delta_sum_by_panel", {})
         initial_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
         initial_header = build_dashboard_header_data(
             ui_interval=ui_interval,
             options_version=backend_state["options_version"],
             price_version=backend_state["price_version"],
+            price_done_at=initial_price_done_at,
             ports=ports,
             options_done_at_by_port=initial_options_done_at_by_port,
         )
@@ -675,12 +768,14 @@ if __name__ == "__main__":
             latest_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
             latest_options_version = backend_state["options_version"]
             latest_price_version = backend_state["price_version"]
+            latest_price_done_at = backend_state.get("price_done_at")
             try:
                 need_redraw = False
                 header_data = build_dashboard_header_data(
                     ui_interval=ui_interval,
                     options_version=latest_options_version,
                     price_version=latest_price_version,
+                    price_done_at=latest_price_done_at,
                     ports=ports,
                     options_done_at_by_port=latest_options_done_at_by_port,
                 )
@@ -759,7 +854,12 @@ if __name__ == "__main__":
                                 base_lines[key] = (base_line, base_text)
                                 need_redraw = True
                             else:
-                                update_plot(ax, options, state)
+                                update_plot(
+                                    ax,
+                                    options,
+                                    state,
+                                    stock_price=latest_prices_snapshot.get(stock_code),
+                                )
                                 need_redraw = True
                             last_drawn_options[key] = plot_signature
                             last_hover_options[key] = hover_signature
@@ -795,15 +895,25 @@ if __name__ == "__main__":
                                 )
                                 continue
 
-                            moved = move_base_line(
-                                axs[row_index][port_index], line, text, latest_price
-                            )
+                            ax = axs[row_index][port_index]
+                            moved = move_base_line(ax, line, text, latest_price)
                             if moved:
                                 last_drawn_prices[key] = latest_price
                                 need_redraw = True
                                 logger.info(
                                     f"chart {stock_code}@{port} moved base line to y={latest_price}"
                                 )
+                            panel_options = latest_options_snapshot.get(key, [])
+                            panel_y_values = [
+                                option.get("strike_price")
+                                for option in panel_options
+                            ]
+                            if _maybe_expand_panel_y_range_for_price(
+                                ax,
+                                panel_y_values,
+                                latest_price,
+                            ):
+                                need_redraw = True
                     last_handled_price_version["value"] = latest_price_version
 
                 if need_redraw:

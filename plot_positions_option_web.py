@@ -213,6 +213,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     options_snapshot = state["options"]
     delta_sum_by_panel = state.get("delta_sum_by_panel", {})
     options_done_at_by_port = state.get("options_done_at_by_port", {})
+    price_done_at = state.get("price_done_at")
     options_version = state["options_version"]
     price_version = state["price_version"]
 
@@ -242,6 +243,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
         ui_interval=ui_interval,
         options_version=options_version,
         price_version=price_version,
+        price_done_at=price_done_at,
         ports=backend.ports,
         options_done_at_by_port=options_done_at_by_port,
     )
@@ -259,6 +261,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             "price": price_version,
         },
         "options_done_at_by_port": options_done_at_by_port,
+        "price_done_at": price_done_at,
         "server_settings": server_settings or {},
         "server_settings_text": format_server_settings_text(server_settings) if server_settings else "",
         "panels": panels,

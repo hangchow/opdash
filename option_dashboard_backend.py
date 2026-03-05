@@ -84,6 +84,7 @@ class OptionDashboardBackend:
         self.latest_price_option_code = {}
         self.latest_delta_sum_by_panel = {}
         self.options_done_at_by_port = {}
+        self.price_done_at = None
         self.options_version = 0
         self.price_version = 0
 
@@ -167,9 +168,13 @@ class OptionDashboardBackend:
                 price_mode=self.price_mode,
                 quote_lock=price_quote_lock,
             )
+            initial_price_done_at = (
+                datetime.now(timezone.utc).isoformat() if initial_prices else None
+            )
 
             with self.price_lock:
                 self.latest_prices = dict(initial_prices)
+                self.price_done_at = initial_price_done_at
             with self.options_lock:
                 self.latest_options = dict(initial_options_by_panel)
                 self.latest_option_code = dict(initial_option_code_by_panel)
@@ -228,6 +233,7 @@ class OptionDashboardBackend:
     def get_state_snapshot(self):
         with self.price_lock:
             prices_snapshot = dict(self.latest_prices)
+            price_done_at_snapshot = self.price_done_at
         with self.options_lock:
             options_snapshot = {
                 key: list(options)
@@ -242,6 +248,7 @@ class OptionDashboardBackend:
             price_version = self.price_version
         return {
             "prices": prices_snapshot,
+            "price_done_at": price_done_at_snapshot,
             "options": options_snapshot,
             "options_sig": options_sig_snapshot,
             "hover_sig": hover_sig_snapshot,
@@ -271,8 +278,10 @@ class OptionDashboardBackend:
                     quote_lock=quote_lock,
                 )
                 if prices:
+                    price_done_at = datetime.now(timezone.utc).isoformat()
                     with self.price_lock:
                         self.latest_prices.update(prices)
+                        self.price_done_at = price_done_at
                     with self.version_lock:
                         self.price_version += 1
             except Exception as e:

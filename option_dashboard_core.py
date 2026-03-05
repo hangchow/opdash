@@ -246,16 +246,17 @@ def format_dashboard_status_text(
     ui_interval,
     options_version,
     price_version,
+    price_done_at=None,
     ports,
     options_done_at_by_port,
 ):
     generated_at_text = _format_display_datetime(generated_at)
-    price_version_text = "-" if price_version is None else str(price_version)
+    price_done_text = _format_display_time(price_done_at)
     options_done_text = format_options_done_text(ports, options_done_at_by_port)
     return (
         f"updated: {generated_at_text} | "
         f"options_loaded={options_done_text} | "
-        f"price_v={price_version_text}"
+        f"price_loaded={price_done_text}"
     )
 
 
@@ -264,6 +265,7 @@ def build_dashboard_header_data(
     ui_interval,
     options_version,
     price_version,
+    price_done_at=None,
     ports,
     options_done_at_by_port,
     generated_at=None,
@@ -276,6 +278,7 @@ def build_dashboard_header_data(
         ui_interval=ui_interval,
         options_version=options_version,
         price_version=price_version,
+        price_done_at=price_done_at,
         ports=ports,
         options_done_at_by_port=options_done_at_by_port,
     )
