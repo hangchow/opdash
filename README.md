@@ -5,9 +5,9 @@ Options position dashboard and plotting tool.
 ## Contents
 
 - `plot_positions_option.py`: Matplotlib GUI visualization script (existing)
-- `plot_positions_option_web.py`: web dashboard entry (new)
-- `option_dashboard_backend.py`: shared polling backend for GUI/Web (new)
-- `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets (new)
+- `plot_positions_option_web.py`: web dashboard entry
+- `option_dashboard_backend.py`: shared polling backend for GUI/Web
+- `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
 - `options.py`, `positions.py`, `stocks.py`: required local modules
 - [`docs/plot_positions_option.md`](docs/plot_positions_option.md): Matplotlib GUI usage guide
 - [`docs/plot_positions_option_web.md`](docs/plot_positions_option_web.md): web dashboard usage guide
@@ -35,7 +35,7 @@ Matplotlib GUI:
 python plot_positions_option.py US.AAPL
 ```
 
-Web dashboard (new):
+Web dashboard:
 
 ```bash
 python plot_positions_option_web.py US.AAPL --web_host 127.0.0.1 --web_port 18080

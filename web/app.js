@@ -7,6 +7,13 @@ const fullscreenState = {
   button: null,
   backdrop: null,
 };
+const LEGEND_SHORT_COLOR = "rgb(0, 153, 0)";
+const LEGEND_LONG_COLOR = "rgb(255, 104, 181)";
+const LEGEND_HOLLOW_COLOR = "#ffffff";
+const Y_RANGE_PAD_RATIO = 0.1;
+const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
+const Y_RANGE_MIN_PAD = 1.0;
+const panelYRangeState = new Map();
 
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -101,14 +108,177 @@ function createFullscreenButton(card, chartId) {
   return button;
 }
 
+function toFiniteNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function computePanelYRange(strikePrices, stockPrice) {
+  const candidates = [];
+  (strikePrices || []).forEach((value) => {
+    const num = toFiniteNumber(value);
+    if (num !== null) {
+      candidates.push(num);
+    }
+  });
+  const priceNum = toFiniteNumber(stockPrice);
+  if (priceNum !== null) {
+    candidates.push(priceNum);
+  }
+  if (candidates.length === 0) {
+    return null;
+  }
+  const yMin = Math.min(...candidates);
+  const yMax = Math.max(...candidates);
+  const yPad = Math.max(Y_RANGE_MIN_PAD, (yMax - yMin) * Y_RANGE_PAD_RATIO);
+  return [yMin - yPad, yMax + yPad];
+}
+
+function optionBoundsKey(strikePrices) {
+  const finitePrices = (strikePrices || [])
+    .map((value) => toFiniteNumber(value))
+    .filter((value) => value !== null);
+  if (finitePrices.length === 0) {
+    return "none";
+  }
+  const yMin = Math.min(...finitePrices);
+  const yMax = Math.max(...finitePrices);
+  return `${yMin.toFixed(6)}|${yMax.toFixed(6)}`;
+}
+
+function isPriceNearOrOutsideYEdge(yRange, stockPrice) {
+  if (!Array.isArray(yRange) || yRange.length !== 2) {
+    return false;
+  }
+  const priceNum = toFiniteNumber(stockPrice);
+  if (priceNum === null) {
+    return false;
+  }
+  const yMin = Math.min(Number(yRange[0]), Number(yRange[1]));
+  const yMax = Math.max(Number(yRange[0]), Number(yRange[1]));
+  const span = yMax - yMin;
+  if (!Number.isFinite(span) || span <= 0) {
+    return true;
+  }
+  const innerMin = yMin + span * Y_RANGE_EDGE_TRIGGER_RATIO;
+  const innerMax = yMax - span * Y_RANGE_EDGE_TRIGGER_RATIO;
+  return priceNum <= innerMin || priceNum >= innerMax;
+}
+
+function mergeExpandedYRange(currentRange, targetRange) {
+  if (!Array.isArray(currentRange) || currentRange.length !== 2) {
+    return targetRange;
+  }
+  if (!Array.isArray(targetRange) || targetRange.length !== 2) {
+    return currentRange;
+  }
+  const currentMin = Math.min(Number(currentRange[0]), Number(currentRange[1]));
+  const currentMax = Math.max(Number(currentRange[0]), Number(currentRange[1]));
+  const targetMin = Math.min(Number(targetRange[0]), Number(targetRange[1]));
+  const targetMax = Math.max(Number(targetRange[0]), Number(targetRange[1]));
+  return [Math.min(currentMin, targetMin), Math.max(currentMax, targetMax)];
+}
+
+function pickPanelYRange(chartId, strikePrices, stockPrice) {
+  const boundsKey = optionBoundsKey(strikePrices);
+  const targetRange = computePanelYRange(strikePrices, stockPrice);
+  const prevState = panelYRangeState.get(chartId);
+
+  let nextRange = targetRange;
+  if (prevState && Array.isArray(prevState.range) && targetRange) {
+    const optionsBoundsChanged = prevState.boundsKey !== boundsKey;
+    if (!optionsBoundsChanged) {
+      if (isPriceNearOrOutsideYEdge(prevState.range, stockPrice)) {
+        nextRange = mergeExpandedYRange(prevState.range, targetRange);
+      } else {
+        nextRange = prevState.range;
+      }
+    }
+  }
+
+  if (nextRange) {
+    panelYRangeState.set(chartId, { range: nextRange, boundsKey });
+  } else {
+    panelYRangeState.delete(chartId);
+  }
+  return nextRange;
+}
+
+function legendThresholdText(threshold) {
+  const value = Number(threshold);
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+  return `${Math.round(value)}%`;
+}
+
+function markerSvg(shape, edgeColor, filled = false) {
+  const fillColor = filled ? edgeColor : LEGEND_HOLLOW_COLOR;
+  if (shape === "triangle") {
+    return `
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <polygon
+          points="8,1.8 14,13.6 2,13.6"
+          fill="${fillColor}"
+          stroke="${edgeColor}"
+          stroke-width="1.6"
+          stroke-linejoin="round"
+        />
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle
+        cx="8"
+        cy="8"
+        r="5.5"
+        fill="${fillColor}"
+        stroke="${edgeColor}"
+        stroke-width="1.8"
+      />
+    </svg>
+  `;
+}
+
+function legendItem(iconHtml, label) {
+  return `
+    <div class="legend-item">
+      <span class="legend-icon">${iconHtml}</span>
+      <span class="legend-label">${label}</span>
+    </div>
+  `;
+}
+
+function legendFilledItem(thresholdText) {
+  return `
+    <div class="legend-item">
+      <span class="legend-icon legend-icon-pair">
+        ${markerSvg("circle", LEGEND_SHORT_COLOR, true)}
+        ${markerSvg("triangle", LEGEND_SHORT_COLOR, true)}
+      </span>
+      <span class="legend-label">profit% &gt;= ${thresholdText}</span>
+    </div>
+  `;
+}
+
 function updateLegend(threshold) {
   const legend = document.getElementById("legend");
   if (!legend) {
     return;
   }
-  const shown = threshold === null || threshold === undefined ? "--" : threshold;
-  legend.textContent =
-    `Shape: circle=CALL, triangle=PUT | Edge color: green=SHORT, pink=LONG | Filled marker: profit% >= ${shown}`;
+  const thresholdText = legendThresholdText(threshold);
+  if (legend.dataset.thresholdText === thresholdText) {
+    return;
+  }
+  legend.dataset.thresholdText = thresholdText;
+  legend.innerHTML = [
+    legendItem(markerSvg("circle", LEGEND_SHORT_COLOR), "Short Call"),
+    legendItem(markerSvg("circle", LEGEND_LONG_COLOR), "Long Call"),
+    legendItem(markerSvg("triangle", LEGEND_SHORT_COLOR), "Short Put"),
+    legendItem(markerSvg("triangle", LEGEND_LONG_COLOR), "Long Put"),
+    legendFilledItem(thresholdText),
+  ].join("");
 }
 
 function updateHeader(snapshot) {
@@ -135,8 +305,9 @@ function updateHeader(snapshot) {
   }
   const generatedAt = new Date(snapshot.generated_at).toLocaleString();
   const optionsDone = formatOptionsDoneTimes(snapshot);
+  const priceDone = formatLoadedTime(snapshot.price_done_at);
   statusEl.textContent =
-    `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | options_done=${optionsDone}`;
+    `updated: ${generatedAt} | options_loaded=${optionsDone} | price_loaded=${priceDone}`;
 }
 
 function updateServerSettings(snapshot) {
@@ -163,6 +334,7 @@ function buildGrid(snapshot) {
   exitFullscreenCard();
   const grid = document.getElementById("grid");
   grid.innerHTML = "";
+  panelYRangeState.clear();
   const cols = Math.max(1, snapshot.ports.length);
   grid.style.gridTemplateColumns = `repeat(${cols}, minmax(340px, 1fr))`;
 
@@ -190,6 +362,7 @@ function buildGrid(snapshot) {
 }
 
 function renderPanel(id, panel) {
+  const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
   const xVals = options.map((o) => o.strike_date);
   const yVals = options.map((o) => o.strike_price);
@@ -210,18 +383,7 @@ function renderPanel(id, panel) {
     xRange = [new Date(xMin - xPad), new Date(xMax + xPad)];
   }
 
-  const yCandidates = [...yVals];
-  if (panel.stock_price !== null && panel.stock_price !== undefined) {
-    yCandidates.push(Number(panel.stock_price));
-  }
-
-  let yRange;
-  if (yCandidates.length > 0) {
-    const yMin = Math.min(...yCandidates);
-    const yMax = Math.max(...yCandidates);
-    const yPad = (yMax - yMin) * 0.1 || 1.0;
-    yRange = [yMin - yPad, yMax + yPad];
-  }
+  const yRange = pickPanelYRange(id, yVals, panel.stock_price);
 
   const traces = [];
   if (options.length > 0) {
@@ -263,13 +425,12 @@ function renderPanel(id, panel) {
     });
     annotations.push({
       xref: "paper",
-      x: 0,
+      x: isLeftColumn ? 0.01 : 0.99,
       y: y0,
-      xanchor: "right",
+      xanchor: isLeftColumn ? "left" : "right",
       yanchor: "middle",
-      text: `y=${y0.toFixed(2)}`,
+      text: y0.toFixed(2),
       showarrow: false,
-      xshift: -8,
       font: { color: "red", size: 11 },
     });
   }
@@ -288,22 +449,25 @@ function renderPanel(id, panel) {
 
   const layout = {
     template: "none",
-    title: { text: panel.title, x: 0.01, xanchor: "left", font: { size: 14 } },
-    margin: { l: 70, r: 20, t: 58, b: 82 },
+    title: { text: panel.title, x: 0.5, xanchor: "center", font: { size: 14 } },
+    margin: isLeftColumn
+      ? { l: 70, r: 20, t: 58, b: 92 }
+      : { l: 36, r: 70, t: 58, b: 92 },
     xaxis: {
-      title: { text: "Strike Date", font: { size: 14 } },
+      title: { text: "Strike Date", font: { size: 14 }, standoff: 10 },
       type: "date",
       tickmode: uniqueDates.length > 0 ? "array" : "auto",
       tickvals: uniqueDates.length > 0 ? uniqueDates : undefined,
       ticktext: uniqueDates.length > 0 ? uniqueDates : undefined,
       range: xRange,
       tickangle: -45,
-      automargin: true,
+      automargin: false,
       tickfont: { size: 12 },
       gridcolor: "#edf2f7",
     },
     yaxis: {
-      title: { text: "Strike Price", font: { size: 14 } },
+      title: isLeftColumn ? { text: "Strike Price", font: { size: 14 } } : undefined,
+      side: isLeftColumn ? "left" : "right",
       range: yRange,
       automargin: true,
       tickfont: { size: 12 },
@@ -346,6 +510,17 @@ function formatOptionsDoneTimes(snapshot) {
     return `${port}:${dt.toLocaleTimeString()}`;
   });
   return parts.join(", ");
+}
+
+function formatLoadedTime(iso) {
+  if (!iso) {
+    return "-";
+  }
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) {
+    return "-";
+  }
+  return dt.toLocaleTimeString();
 }
 
 async function refresh() {

@@ -181,7 +181,10 @@ def format_server_settings_text(server_settings, prefix="server settings"):
     futu_ports = s.get("futu_ports") or []
     stock_codes_text = ",".join(str(code) for code in stock_codes) if stock_codes else "-"
     futu_ports_text = ",".join(str(port) for port in futu_ports) if futu_ports else "-"
-    started_at_text = s.get("started_at") or "-"
+    raw_started_at = s.get("started_at")
+    started_at_text = _format_display_datetime(raw_started_at)
+    if started_at_text == "-" and raw_started_at:
+        started_at_text = str(raw_started_at)
     threshold = s.get("profit_highlight_threshold")
     if threshold is None:
         threshold_text = "-"
@@ -247,20 +250,6 @@ def _format_display_time(value):
     return dt.astimezone().strftime("%H:%M:%S")
 
 
-def _format_interval_seconds(value):
-    if value is None:
-        return "-"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "-"
-    if not np.isfinite(number):
-        return "-"
-    if abs(number - int(number)) < 1e-9:
-        return f"{int(number)}s"
-    return f"{number:g}s"
-
-
 def format_options_done_text(ports, options_done_at_by_port):
     ports_list = list(ports or [])
     if not ports_list:
@@ -281,20 +270,17 @@ def format_dashboard_status_text(
     ui_interval,
     options_version,
     price_version,
+    price_done_at=None,
     ports,
     options_done_at_by_port,
 ):
     generated_at_text = _format_display_datetime(generated_at)
-    ui_interval_text = _format_interval_seconds(ui_interval)
-    options_version_text = "-" if options_version is None else str(options_version)
-    price_version_text = "-" if price_version is None else str(price_version)
+    price_done_text = _format_display_time(price_done_at)
     options_done_text = format_options_done_text(ports, options_done_at_by_port)
     return (
         f"updated: {generated_at_text} | "
-        f"ui_refresh={ui_interval_text} | "
-        f"options_v={options_version_text} "
-        f"price_v={price_version_text} | "
-        f"options_done={options_done_text}"
+        f"options_loaded={options_done_text} | "
+        f"price_loaded={price_done_text}"
     )
 
 
@@ -303,6 +289,7 @@ def build_dashboard_header_data(
     ui_interval,
     options_version,
     price_version,
+    price_done_at=None,
     ports,
     options_done_at_by_port,
     generated_at=None,
@@ -315,6 +302,7 @@ def build_dashboard_header_data(
         ui_interval=ui_interval,
         options_version=options_version,
         price_version=price_version,
+        price_done_at=price_done_at,
         ports=ports,
         options_done_at_by_port=options_done_at_by_port,
     )
@@ -692,6 +680,8 @@ def _get_options_map_from_positions(positions, stock_codes):
             logger.error(f"Unknown option type in code {code}, skip.")
             continue
         pl_ratio = _safe_float(position.get("pl_ratio", 0), 0.0)
+        pl_val = _safe_float(position.get("pl_val"), None)
+        market_val = _safe_float(position.get("market_val"), None)
         option_item = {
             "code": code,
             "type": option_type,
@@ -700,6 +690,8 @@ def _get_options_map_from_positions(positions, stock_codes):
             "strike_price": float(code_segs[3]) / 1000,
             "count": count,
             "pl_ratio": pl_ratio,
+            "pl_val": pl_val,
+            "market_val": market_val,
         }
         for stock_code in target_stock_codes:
             if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
@@ -767,6 +759,20 @@ def get_options_delta_sum(options):
             contract_size = 100
         total_delta += count * delta * contract_size
     return total_delta
+
+
+def get_options_short_value_sum(options):
+    # 统计空头期权市值总和（按绝对值汇总，便于阅读）
+    total_short_value = 0.0
+    for option in options or []:
+        count = _safe_int(option.get("count"), 0)
+        if count >= 0:
+            continue
+        market_val = _safe_float(option.get("market_val"), None)
+        if market_val is None:
+            continue
+        total_short_value += abs(market_val)
+    return total_short_value
 
 
 def _get_options_from_positions(positions, stock_code):
@@ -1016,6 +1022,7 @@ def _options_hover_signature(options):
         volume = _safe_int(option.get("volume"), None)
         open_interest = _safe_int(option.get("open_interest"), None)
         profit_ratio = _safe_float(option.get("pl_ratio"), None)
+        profit_value = _safe_float(option.get("pl_val"), None)
         signature.append(
             (
                 option.get("code"),
@@ -1026,6 +1033,7 @@ def _options_hover_signature(options):
                 volume,
                 open_interest,
                 None if profit_ratio is None else round(profit_ratio, 4),
+                None if profit_value is None else round(profit_value, 4),
             )
         )
     return tuple(sorted(signature))
@@ -1035,11 +1043,16 @@ def _panel_key(port_index, stock_code):
     return (port_index, stock_code)
 
 
-def _panel_title(stock_code, port, delta_sum=None):
+def _panel_title(stock_code, port, delta_sum=None, short_value=None):
     title = f"{stock_code} Option Positions (Port {port})"
-    if delta_sum is None:
+    metrics = []
+    if delta_sum is not None:
+        metrics.append(f"delta={_safe_float(delta_sum, 0.0):+.3f}")
+    if short_value is not None:
+        metrics.append(f"short_value={_safe_float(short_value, 0.0):.2f}")
+    if not metrics:
         return title
-    return f"{title} | delta={_safe_float(delta_sum, 0.0):+.3f}"
+    return f"{title} | {' | '.join(metrics)}"
 
 
 def _pick_price_option_code(stock_code, option_code_by_panel, port_count):

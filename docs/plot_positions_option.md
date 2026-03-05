@@ -21,7 +21,7 @@ For each stock:
   - pink = long position
 - Marker size grows with contract count
 - Filled markers mean `pl_ratio >= profit_highlight_threshold` (default `80%`)
-- A single in-chart legend (upper-left panel) explains shape/color semantics
+- A single page-level legend (top-right corner) explains shape/color semantics
 - A red dashed horizontal line shows the underlying stock price
 
 If you pass two ports, charts are shown side by side (one column per port) for comparison.
