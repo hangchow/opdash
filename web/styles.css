@@ -15,11 +15,21 @@ body {
 }
 
 .header {
-  margin-bottom: 12px;
+  margin: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 12px;
+  min-width: 320px;
+  flex: 1 1 360px;
+}
+
+.topbar {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
 }
 
 .title {
@@ -34,9 +44,13 @@ body {
 }
 
 .legend {
-  margin: 8px 0 14px;
+  margin: 0;
   color: #334155;
   font-size: 13px;
+  line-height: 1.45;
+  text-align: right;
+  max-width: min(48vw, 640px);
+  flex: 0 1 640px;
 }
 
 .server-settings {
@@ -51,7 +65,7 @@ body {
 
 .grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .card {
@@ -134,6 +148,20 @@ body.chart-fullscreen-active {
 }
 
 @media (max-width: 840px) {
+  .topbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .header {
+    min-width: 0;
+  }
+
+  .legend {
+    text-align: left;
+    max-width: 100%;
+  }
+
   .card {
     min-height: 420px;
   }

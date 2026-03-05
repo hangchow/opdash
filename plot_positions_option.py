@@ -161,8 +161,8 @@ def _to_offsets(x_list, y_list):
     return np.column_stack((x_list, y_list))
 
 
-def _add_marker_legend(ax):
-    # In-chart legend for shape/color semantics
+def _marker_legend_items():
+    # Marker semantics legend shown once at figure level
     sell_filled_combo = (
         Line2D(
             [],
@@ -183,7 +183,7 @@ def _add_marker_legend(ax):
             markersize=8,
         ),
     )
-    legend_handles = [
+    handles = [
         Line2D(
             [],
             [],
@@ -226,24 +226,43 @@ def _add_marker_legend(ax):
         ),
         sell_filled_combo,
     ]
-    legend_labels = [
+    labels = [
         "Short Call",
         "Long Call",
         "Short Put",
         "Long Put",
         f"profit% >= {get_profit_highlight_threshold():.0f}%",
     ]
-    ax.legend(
-        handles=legend_handles,
-        labels=legend_labels,
-        loc="upper left",
+    return handles, labels
+
+
+def _figure_axes_right_edge(fig):
+    axes = [ax for ax in fig.axes if ax.get_visible()]
+    if not axes:
+        return 0.995
+    return max(ax.get_position().x1 for ax in axes)
+
+
+def _add_marker_legend(fig, anchor_y=0.985):
+    handles, labels = _marker_legend_items()
+    anchor_x = _figure_axes_right_edge(fig)
+    fig.legend(
+        handles=handles,
+        labels=labels,
+        loc="upper right",
+        bbox_to_anchor=(anchor_x, anchor_y),
+        bbox_transform=fig.transFigure,
         fontsize=9,
         framealpha=0.9,
+        borderaxespad=0.0,
+        ncol=2,
+        columnspacing=1.2,
+        handletextpad=0.6,
         handler_map={tuple: HandlerTuple(ndivide=None)},
     )
 
 
-def plot_chart(ax, options, stock_code, stock_price=None, chart_title=None, show_legend=False):
+def plot_chart(ax, options, stock_code, stock_price=None, chart_title=None):
     # 初始化绘图：散点 + 悬停 + 基准线
     plot_data = _compute_plot_data(options)
     call_x = plot_data["call_x"]
@@ -272,8 +291,6 @@ def plot_chart(ax, options, stock_code, stock_price=None, chart_title=None, show
     ax.set_xlabel("Strike Date")
     ax.set_ylabel("Strike Price")
     ax.set_title(chart_title or f"{stock_code} Option Positions")
-    if show_legend:
-        _add_marker_legend(ax)
 
     state = {
         "call_sc": call_sc,
@@ -379,7 +396,7 @@ def draw_base_line(ax, y, price):
     text = ax.text(
         -0.01,
         base_y,
-        f'y={base_y:.2f}',
+        f"{base_y:.2f}",
         color='red',
         fontsize=10,
         ha='right',
@@ -396,7 +413,7 @@ def move_base_line(ax, line, text, new_y):
         return False
     line.set_ydata([new_y_round, new_y_round])
     text.set_position((-0.01, new_y_round))
-    text.set_text(f'y={new_y_round:.2f}')
+    text.set_text(f"{new_y_round:.2f}")
     return True
 
 
@@ -434,11 +451,12 @@ def _wrap_figure_text(text, width=180):
 
 
 def _apply_layout_with_header_footer(fig, header_title, header_status, footer_text):
-    wrapped_status = _wrap_figure_text(header_status)
+    wrapped_status = _wrap_figure_text(header_status, width=120)
     wrapped_footer = _wrap_figure_text(footer_text)
     status_line_count = wrapped_status.count("\n") + 1
     footer_line_count = wrapped_footer.count("\n") + 1
-    top_margin = max(0.82, 0.94 - status_line_count * 0.03)
+    # Keep charts compact: reserve only a top band for title/status + global legend.
+    top_margin = max(0.83, 0.93 - status_line_count * 0.03)
     bottom_margin = min(0.28, 0.03 + footer_line_count * 0.026)
     fig.tight_layout(rect=(0, bottom_margin, 1, top_margin))
     fig.suptitle(
@@ -566,7 +584,6 @@ if __name__ == "__main__":
         base_lines = {}
         plot_states = {}
         last_drawn_prices = {}
-        legend_state = {"drawn": False}
         for port_index, port in enumerate(ports):
             for row_index, stock_code in enumerate(stock_codes):
                 key = _panel_key(port_index, stock_code)
@@ -590,9 +607,7 @@ if __name__ == "__main__":
                     stock_code,
                     stock_price,
                     chart_title=_panel_title(stock_code, port, delta_sum=delta_sum),
-                    show_legend=not legend_state["drawn"],
                 )
-                legend_state["drawn"] = True
                 base_lines[key] = (base_line, base_text)
                 plot_states[key] = state
                 if base_line is not None and stock_price is not None:
@@ -604,6 +619,7 @@ if __name__ == "__main__":
             initial_header["status_text"],
             startup_footer_text,
         )
+        _add_marker_legend(fig)
         maximize_figure_window(fig)
         fig.canvas.draw()
         header_state = {
@@ -712,9 +728,7 @@ if __name__ == "__main__":
                                         port,
                                         delta_sum=delta_sum,
                                     ),
-                                    show_legend=not legend_state["drawn"],
                                 )
-                                legend_state["drawn"] = True
                                 plot_states[key] = state
                                 base_lines[key] = (base_line, base_text)
                                 need_redraw = True

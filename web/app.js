@@ -267,7 +267,7 @@ function renderPanel(id, panel) {
       y: y0,
       xanchor: "right",
       yanchor: "middle",
-      text: `y=${y0.toFixed(2)}`,
+      text: y0.toFixed(2),
       showarrow: false,
       xshift: -8,
       font: { color: "red", size: 11 },
