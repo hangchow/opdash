@@ -47,3 +47,4 @@ Then open `http://127.0.0.1:18080` in your browser.
 
 - GUI and Web now share `option_dashboard_backend.py` + `option_dashboard_core.py` for backend logic.
 - Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
+- Best-fit scenario: Most of your option positions are short positions.
