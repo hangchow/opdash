@@ -271,7 +271,14 @@ def create_app(backend, ui_interval, server_settings=None):
 
     @app.get("/", response_class=FileResponse)
     def index():
-        return FileResponse(WEB_DIR / "index.html")
+        return FileResponse(
+            WEB_DIR / "index.html",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/api/snapshot")
     def snapshot():

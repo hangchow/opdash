@@ -7,6 +7,9 @@ const fullscreenState = {
   button: null,
   backdrop: null,
 };
+const LEGEND_SHORT_COLOR = "rgb(0, 153, 0)";
+const LEGEND_LONG_COLOR = "rgb(255, 104, 181)";
+const LEGEND_HOLLOW_COLOR = "#ffffff";
 
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -101,14 +104,81 @@ function createFullscreenButton(card, chartId) {
   return button;
 }
 
+function legendThresholdText(threshold) {
+  const value = Number(threshold);
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+  return `${Math.round(value)}%`;
+}
+
+function markerSvg(shape, edgeColor, filled = false) {
+  const fillColor = filled ? edgeColor : LEGEND_HOLLOW_COLOR;
+  if (shape === "triangle") {
+    return `
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <polygon
+          points="8,1.8 14,13.6 2,13.6"
+          fill="${fillColor}"
+          stroke="${edgeColor}"
+          stroke-width="1.6"
+          stroke-linejoin="round"
+        />
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle
+        cx="8"
+        cy="8"
+        r="5.5"
+        fill="${fillColor}"
+        stroke="${edgeColor}"
+        stroke-width="1.8"
+      />
+    </svg>
+  `;
+}
+
+function legendItem(iconHtml, label) {
+  return `
+    <div class="legend-item">
+      <span class="legend-icon">${iconHtml}</span>
+      <span class="legend-label">${label}</span>
+    </div>
+  `;
+}
+
+function legendFilledItem(thresholdText) {
+  return `
+    <div class="legend-item">
+      <span class="legend-icon legend-icon-pair">
+        ${markerSvg("circle", LEGEND_SHORT_COLOR, true)}
+        ${markerSvg("triangle", LEGEND_SHORT_COLOR, true)}
+      </span>
+      <span class="legend-label">profit% &gt;= ${thresholdText}</span>
+    </div>
+  `;
+}
+
 function updateLegend(threshold) {
   const legend = document.getElementById("legend");
   if (!legend) {
     return;
   }
-  const shown = threshold === null || threshold === undefined ? "--" : threshold;
-  legend.textContent =
-    `Shape: circle=CALL, triangle=PUT | Edge color: green=SHORT, pink=LONG | Filled marker: profit% >= ${shown}`;
+  const thresholdText = legendThresholdText(threshold);
+  if (legend.dataset.thresholdText === thresholdText) {
+    return;
+  }
+  legend.dataset.thresholdText = thresholdText;
+  legend.innerHTML = [
+    legendItem(markerSvg("circle", LEGEND_SHORT_COLOR), "Short Call"),
+    legendItem(markerSvg("circle", LEGEND_LONG_COLOR), "Long Call"),
+    legendItem(markerSvg("triangle", LEGEND_SHORT_COLOR), "Short Put"),
+    legendItem(markerSvg("triangle", LEGEND_LONG_COLOR), "Long Put"),
+    legendFilledItem(thresholdText),
+  ].join("");
 }
 
 function updateHeader(snapshot) {
@@ -288,7 +358,7 @@ function renderPanel(id, panel) {
 
   const layout = {
     template: "none",
-    title: { text: panel.title, x: 0.01, xanchor: "left", font: { size: 14 } },
+    title: { text: panel.title, x: 0.5, xanchor: "center", font: { size: 14 } },
     margin: { l: 70, r: 20, t: 58, b: 82 },
     xaxis: {
       title: { text: "Strike Date", font: { size: 14 } },
