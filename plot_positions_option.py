@@ -23,6 +23,7 @@ from option_dashboard_core import (
     build_server_settings,
     format_server_settings_text,
     get_profit_highlight_threshold,
+    make_telegram_short_close_alert_handler,
     _fmt_int,
     _fmt_percent,
     _fmt_price,
@@ -74,6 +75,8 @@ def parse_args():
         args.ui_interval,
         args.price_mode,
         args.profit_highlight_threshold,
+        args.telegram_bot_token,
+        args.telegram_chat_id,
     )
 
 
@@ -483,12 +486,29 @@ if __name__ == "__main__":
         ui_interval,
         price_mode,
         profit_highlight_threshold,
+        telegram_bot_token,
+        telegram_chat_id,
     ) = parse_args()
     try:
         set_profit_highlight_threshold(profit_highlight_threshold)
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
+    short_alert_handler = make_telegram_short_close_alert_handler(
+        telegram_bot_token,
+        telegram_chat_id,
+        logger_obj=logger,
+    )
+    if short_alert_handler:
+        logger.info(
+            "Short close alerts enabled on Telegram at threshold %.2f%%",
+            profit_highlight_threshold,
+        )
+    elif str(telegram_bot_token).strip() or str(telegram_chat_id).strip():
+        logger.warning(
+            "Telegram short close alerts disabled: both --telegram_bot_token and "
+            "--telegram_chat_id are required"
+        )
     stock_codes = [s.strip() for s in stock_codes_str.split(",") if s.strip()]
     if not stock_codes:
         logger.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")
@@ -504,6 +524,7 @@ if __name__ == "__main__":
         ui_interval=ui_interval,
         price_mode=price_mode,
         profit_highlight_threshold=profit_highlight_threshold,
+        telegram_alert_enabled=bool(short_alert_handler),
     )
     startup_footer_text = format_server_settings_text(
         startup_settings, prefix="startup args"
@@ -544,6 +565,8 @@ if __name__ == "__main__":
         poll_purpose_prefix="poll_options",
         price_thread_name="poll_price",
         options_thread_name_prefix="poll_options_",
+        short_alert_threshold=profit_highlight_threshold if short_alert_handler else None,
+        short_alert_handler=short_alert_handler,
     )
 
     try:

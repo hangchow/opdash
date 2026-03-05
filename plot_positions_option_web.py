@@ -24,6 +24,7 @@ from option_dashboard_core import (
     format_server_settings_text,
     get_dashboard_title,
     get_profit_highlight_threshold,
+    make_telegram_short_close_alert_handler,
     _fmt_int,
     _fmt_percent,
     _fmt_price,
@@ -90,6 +91,8 @@ def parse_args():
         "ui_interval": args.ui_interval,
         "price_mode": args.price_mode,
         "profit_highlight_threshold": args.profit_highlight_threshold,
+        "telegram_bot_token": args.telegram_bot_token,
+        "telegram_chat_id": args.telegram_chat_id,
         "web_host": args.web_host,
         "web_port": args.web_port,
     }
@@ -291,6 +294,21 @@ def main():
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
+    short_alert_handler = make_telegram_short_close_alert_handler(
+        args["telegram_bot_token"],
+        args["telegram_chat_id"],
+        logger_obj=logger,
+    )
+    if short_alert_handler:
+        logger.info(
+            "Short close alerts enabled on Telegram at threshold %.2f%%",
+            args["profit_highlight_threshold"],
+        )
+    elif str(args["telegram_bot_token"]).strip() or str(args["telegram_chat_id"]).strip():
+        logger.warning(
+            "Telegram short close alerts disabled: both --telegram_bot_token and "
+            "--telegram_chat_id are required"
+        )
     server_settings = build_server_settings(
         stock_codes=args["stock_codes"],
         futu_host=args["host"],
@@ -300,6 +318,7 @@ def main():
         ui_interval=args["ui_interval"],
         price_mode=args["price_mode"],
         profit_highlight_threshold=args["profit_highlight_threshold"],
+        telegram_alert_enabled=bool(short_alert_handler),
         web_host=args["web_host"],
         web_port=args["web_port"],
     )
@@ -328,6 +347,10 @@ def main():
         poll_purpose_prefix="poll_options_web",
         price_thread_name="poll_price_web",
         options_thread_name_prefix="poll_options_web_",
+        short_alert_threshold=(
+            args["profit_highlight_threshold"] if short_alert_handler else None
+        ),
+        short_alert_handler=short_alert_handler,
     )
 
     try:

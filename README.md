@@ -43,7 +43,16 @@ python plot_positions_option_web.py US.AAPL --web_host 127.0.0.1 --web_port 1808
 
 Then open `http://127.0.0.1:18080` in your browser.
 
+Enable Telegram short-close alerts (default threshold follows `--profit_highlight_threshold`, default `80`):
+
+```bash
+python plot_positions_option_web.py US.AAPL \
+  --telegram_bot_token <BOT_TOKEN> \
+  --telegram_chat_id <CHAT_ID>
+```
+
 ## Notes
 
 - GUI and Web now share `option_dashboard_backend.py` + `option_dashboard_core.py` for backend logic.
 - Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
+- Telegram short-close alerts trigger only for `SHORT` options whose `pl_ratio` crosses the configured threshold (newly-hit only, de-duplicated).
