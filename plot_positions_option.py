@@ -97,6 +97,7 @@ def _point_counts_from_options(options):
             "volume": option.get("volume"),
             "open_interest": option.get("open_interest"),
             "profit_ratio": option.get("pl_ratio"),
+            "profit_value": option.get("pl_val"),
         }
         entry = point_counts.setdefault(key, [])
         entry.append(detail)
@@ -409,12 +410,15 @@ def plot_chart(
             ):
                 side_text = "SHORT" if detail.get("side") == SIDE_SHORT else "LONG"
                 type_text = "CALL" if detail.get("type") == OptionEnum.CALL else "PUT"
+                profit_value = _safe_float(detail.get("profit_value"), None)
+                profit_value_text = "N/A" if profit_value is None else f"{profit_value:+.2f}"
                 lines.append(
                     f"{side_text} {type_text}: "
                     f"count={detail['count']}, price={_fmt_price(detail.get('price'))}, "
                     f"bid_price={_fmt_price(detail.get('bid_price'))}, ask_price={_fmt_price(detail.get('ask_price'))}, "
                     f"volume={_fmt_int(detail.get('volume'))}, oi={_fmt_int(detail.get('open_interest'))}, "
-                    f"profit%={_fmt_percent(detail.get('profit_ratio'))}"
+                    f"profit%={_fmt_percent(detail.get('profit_ratio'))}, "
+                    f"p/l={profit_value_text}"
                 )
             sel.annotation.set_text("\n".join(lines))
         else:

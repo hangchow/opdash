@@ -129,6 +129,8 @@ def _normalize_option(option):
     strike_price = _safe_float(option.get("strike_price"), 0.0)
     strike_date_iso = _strike_date_to_iso(option.get("strike_date"))
     pl_ratio = _safe_float(option.get("pl_ratio"), 0.0)
+    pl_val = _safe_float(option.get("pl_val"), None)
+    pl_val_text = "N/A" if pl_val is None else f"{pl_val:+.2f}"
     profit_hit = pl_ratio >= get_profit_highlight_threshold()
     line_color = SHORT_COLOR if side == SIDE_SHORT else LONG_COLOR
     marker_area = _marker_area(abs_count)
@@ -141,7 +143,8 @@ def _normalize_option(option):
         f"ask={_fmt_price(option.get('ask_price'))}, "
         f"volume={_fmt_int(option.get('volume'))}, "
         f"oi={_fmt_int(option.get('open_interest'))}<br>"
-        f"profit%={_fmt_percent(option.get('pl_ratio'))}"
+        f"profit%={_fmt_percent(option.get('pl_ratio'))}, "
+        f"p/l={pl_val_text}"
     )
 
     return {
@@ -153,6 +156,7 @@ def _normalize_option(option):
         "count": count,
         "abs_count": abs_count,
         "pl_ratio": pl_ratio,
+        "pl_val": pl_val,
         "profit_hit": profit_hit,
         "marker_symbol": "triangle-up" if option_type == "PUT" else "circle",
         "marker_area": marker_area,

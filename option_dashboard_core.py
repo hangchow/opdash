@@ -550,6 +550,7 @@ def _get_options_map_from_positions(positions, stock_codes):
             logger.error(f"Unknown option type in code {code}, skip.")
             continue
         pl_ratio = _safe_float(position.get("pl_ratio", 0), 0.0)
+        pl_val = _safe_float(position.get("pl_val"), None)
         option_item = {
             "code": code,
             "type": option_type,
@@ -558,6 +559,7 @@ def _get_options_map_from_positions(positions, stock_codes):
             "strike_price": float(code_segs[3]) / 1000,
             "count": count,
             "pl_ratio": pl_ratio,
+            "pl_val": pl_val,
         }
         for stock_code in target_stock_codes:
             if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
@@ -874,6 +876,7 @@ def _options_hover_signature(options):
         volume = _safe_int(option.get("volume"), None)
         open_interest = _safe_int(option.get("open_interest"), None)
         profit_ratio = _safe_float(option.get("pl_ratio"), None)
+        profit_value = _safe_float(option.get("pl_val"), None)
         signature.append(
             (
                 option.get("code"),
@@ -884,6 +887,7 @@ def _options_hover_signature(options):
                 volume,
                 open_interest,
                 None if profit_ratio is None else round(profit_ratio, 4),
+                None if profit_value is None else round(profit_value, 4),
             )
         )
     return tuple(sorted(signature))
