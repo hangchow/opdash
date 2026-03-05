@@ -551,6 +551,7 @@ def _get_options_map_from_positions(positions, stock_codes):
             continue
         pl_ratio = _safe_float(position.get("pl_ratio", 0), 0.0)
         pl_val = _safe_float(position.get("pl_val"), None)
+        market_val = _safe_float(position.get("market_val"), None)
         option_item = {
             "code": code,
             "type": option_type,
@@ -560,6 +561,7 @@ def _get_options_map_from_positions(positions, stock_codes):
             "count": count,
             "pl_ratio": pl_ratio,
             "pl_val": pl_val,
+            "market_val": market_val,
         }
         for stock_code in target_stock_codes:
             if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
@@ -627,6 +629,20 @@ def get_options_delta_sum(options):
             contract_size = 100
         total_delta += count * delta * contract_size
     return total_delta
+
+
+def get_options_short_value_sum(options):
+    # 统计空头期权市值总和（按绝对值汇总，便于阅读）
+    total_short_value = 0.0
+    for option in options or []:
+        count = _safe_int(option.get("count"), 0)
+        if count >= 0:
+            continue
+        market_val = _safe_float(option.get("market_val"), None)
+        if market_val is None:
+            continue
+        total_short_value += abs(market_val)
+    return total_short_value
 
 
 def _get_options_from_positions(positions, stock_code):
@@ -897,11 +913,16 @@ def _panel_key(port_index, stock_code):
     return (port_index, stock_code)
 
 
-def _panel_title(stock_code, port, delta_sum=None):
+def _panel_title(stock_code, port, delta_sum=None, short_value=None):
     title = f"{stock_code} Option Positions (Port {port})"
-    if delta_sum is None:
+    metrics = []
+    if delta_sum is not None:
+        metrics.append(f"delta={_safe_float(delta_sum, 0.0):+.3f}")
+    if short_value is not None:
+        metrics.append(f"short_value={_safe_float(short_value, 0.0):.2f}")
+    if not metrics:
         return title
-    return f"{title} | delta={_safe_float(delta_sum, 0.0):+.3f}"
+    return f"{title} | {' | '.join(metrics)}"
 
 
 def _pick_price_option_code(stock_code, option_code_by_panel, port_count):

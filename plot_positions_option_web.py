@@ -41,6 +41,7 @@ from option_dashboard_core import (
     _safe_int,
     get_options_map,
     get_options_delta_sum,
+    get_options_short_value_sum,
     get_stock_share_delta_map,
     parse_ports_arg,
     safe_quote_ctx,
@@ -228,13 +229,20 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             raw_options = options_snapshot.get(key, [])
             options = [_normalize_option(option) for option in raw_options]
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
+            short_value = get_options_short_value_sum(raw_options)
             panels.append(
                 {
                     "port_index": port_index,
                     "port": port,
                     "stock_code": stock_code,
-                    "title": _panel_title(stock_code, port, delta_sum=delta_sum),
+                    "title": _panel_title(
+                        stock_code,
+                        port,
+                        delta_sum=delta_sum,
+                        short_value=short_value,
+                    ),
                     "delta_sum": delta_sum,
+                    "short_value": short_value,
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
                     "options": options,

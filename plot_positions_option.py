@@ -39,6 +39,7 @@ from option_dashboard_core import (
     _safe_float,
     get_options_map,
     get_options_delta_sum,
+    get_options_short_value_sum,
     get_stock_share_delta_map,
     parse_ports_arg,
     safe_quote_ctx,
@@ -703,6 +704,7 @@ if __name__ == "__main__":
                 options = initial_options_by_panel.get(key, [])
                 stock_price = initial_prices.get(stock_code)
                 delta_sum = _safe_float(initial_delta_sum_by_panel.get(key), 0.0)
+                short_value = get_options_short_value_sum(options)
 
                 if not options:
                     logger.warning(f"No option positions for {stock_code} on port {port}.")
@@ -715,7 +717,14 @@ if __name__ == "__main__":
                         ax.set_ylabel("")
                         ax.yaxis.set_label_position("right")
                         ax.yaxis.tick_right()
-                    ax.set_title(_panel_title(stock_code, port, delta_sum=delta_sum))
+                    ax.set_title(
+                        _panel_title(
+                            stock_code,
+                            port,
+                            delta_sum=delta_sum,
+                            short_value=short_value,
+                        )
+                    )
                     base_lines[key] = (None, None)
                     plot_states[key] = None
                     continue
@@ -725,7 +734,12 @@ if __name__ == "__main__":
                     options,
                     stock_code,
                     stock_price,
-                    chart_title=_panel_title(stock_code, port, delta_sum=delta_sum),
+                    chart_title=_panel_title(
+                        stock_code,
+                        port,
+                        delta_sum=delta_sum,
+                        short_value=short_value,
+                    ),
                     show_y_label=(port_index == 0),
                     y_ticks_on_right=(port_index != 0),
                 )
@@ -753,6 +767,10 @@ if __name__ == "__main__":
         last_drawn_delta_sum = {
             key: _safe_float(delta, 0.0)
             for key, delta in initial_delta_sum_by_panel.items()
+        }
+        last_drawn_short_value = {
+            key: get_options_short_value_sum(options)
+            for key, options in initial_options_by_panel.items()
         }
         last_handled_options_version = {"value": -1}
         last_handled_price_version = {"value": -1}
@@ -795,17 +813,30 @@ if __name__ == "__main__":
                         for row_index, stock_code in enumerate(stock_codes):
                             key = _panel_key(port_index, stock_code)
                             ax = axs[row_index][port_index]
+                            options = latest_options_snapshot.get(key, [])
                             delta_sum = _safe_float(latest_delta_sum_snapshot.get(key), 0.0)
                             prev_delta_sum = _safe_float(last_drawn_delta_sum.get(key), 0.0)
-                            if round(prev_delta_sum, 3) != round(delta_sum, 3):
+                            short_value = get_options_short_value_sum(options)
+                            prev_short_value = _safe_float(
+                                last_drawn_short_value.get(key), 0.0
+                            )
+                            if (
+                                round(prev_delta_sum, 3) != round(delta_sum, 3)
+                                or round(prev_short_value, 2) != round(short_value, 2)
+                            ):
                                 ax.set_title(
-                                    _panel_title(stock_code, port, delta_sum=delta_sum)
+                                    _panel_title(
+                                        stock_code,
+                                        port,
+                                        delta_sum=delta_sum,
+                                        short_value=short_value,
+                                    )
                                 )
                                 last_drawn_delta_sum[key] = delta_sum
+                                last_drawn_short_value[key] = short_value
                                 need_redraw = True
                             if key not in latest_options_snapshot:
                                 continue
-                            options = latest_options_snapshot.get(key, [])
                             plot_signature = latest_options_sig_snapshot.get(key)
                             hover_signature = latest_hover_sig_snapshot.get(key)
                             if plot_signature is None:
@@ -850,6 +881,7 @@ if __name__ == "__main__":
                                         stock_code,
                                         port,
                                         delta_sum=delta_sum,
+                                        short_value=short_value,
                                     ),
                                     show_y_label=(port_index == 0),
                                     y_ticks_on_right=(port_index != 0),
