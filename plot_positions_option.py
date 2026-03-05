@@ -243,7 +243,7 @@ def _figure_axes_right_edge(fig):
     return max(ax.get_position().x1 for ax in axes)
 
 
-def _add_marker_legend(fig, anchor_y=0.985):
+def _add_marker_legend(fig, anchor_y=0.992):
     handles, labels = _marker_legend_items()
     anchor_x = _figure_axes_right_edge(fig)
     fig.legend(
@@ -255,14 +255,22 @@ def _add_marker_legend(fig, anchor_y=0.985):
         fontsize=9,
         framealpha=0.9,
         borderaxespad=0.0,
-        ncol=2,
-        columnspacing=1.2,
-        handletextpad=0.6,
+        ncol=len(labels),
+        columnspacing=1.0,
+        handletextpad=0.45,
         handler_map={tuple: HandlerTuple(ndivide=None)},
     )
 
 
-def plot_chart(ax, options, stock_code, stock_price=None, chart_title=None):
+def plot_chart(
+    ax,
+    options,
+    stock_code,
+    stock_price=None,
+    chart_title=None,
+    show_y_label=True,
+    y_ticks_on_right=False,
+):
     # 初始化绘图：散点 + 悬停 + 基准线
     plot_data = _compute_plot_data(options)
     call_x = plot_data["call_x"]
@@ -289,7 +297,13 @@ def plot_chart(ax, options, stock_code, stock_price=None, chart_title=None):
             rotation_mode="anchor",
         )
     ax.set_xlabel("Strike Date")
-    ax.set_ylabel("Strike Price")
+    ax.set_ylabel("Strike Price" if show_y_label else "")
+    if y_ticks_on_right:
+        ax.yaxis.set_label_position("right")
+        ax.yaxis.tick_right()
+    else:
+        ax.yaxis.set_label_position("left")
+        ax.yaxis.tick_left()
     ax.set_title(chart_title or f"{stock_code} Option Positions")
 
     state = {
@@ -394,14 +408,15 @@ def draw_base_line(ax, y, price):
     base_y = round(price, 2)
     line = ax.axhline(y=base_y, color='red', linestyle='--', linewidth=1)
     text = ax.text(
-        -0.01,
+        0.005,
         base_y,
         f"{base_y:.2f}",
         color='red',
         fontsize=10,
-        ha='right',
+        ha='left',
         va='center',
         transform=ax.get_yaxis_transform(),
+        clip_on=True,
     )
     return line, text
 
@@ -412,7 +427,7 @@ def move_base_line(ax, line, text, new_y):
     if round(curr_y, 2) == new_y_round:
         return False
     line.set_ydata([new_y_round, new_y_round])
-    text.set_position((-0.01, new_y_round))
+    text.set_position((0.005, new_y_round))
     text.set_text(f"{new_y_round:.2f}")
     return True
 
@@ -451,18 +466,18 @@ def _wrap_figure_text(text, width=180):
 
 
 def _apply_layout_with_header_footer(fig, header_title, header_status, footer_text):
-    wrapped_status = _wrap_figure_text(header_status, width=120)
-    wrapped_footer = _wrap_figure_text(footer_text)
+    wrapped_status = _wrap_figure_text(header_status, width=180)
+    wrapped_footer = _wrap_figure_text(footer_text, width=260)
     status_line_count = wrapped_status.count("\n") + 1
     footer_line_count = wrapped_footer.count("\n") + 1
-    # Keep charts compact: reserve only a top band for title/status + global legend.
-    top_margin = max(0.83, 0.93 - status_line_count * 0.03)
-    bottom_margin = min(0.28, 0.03 + footer_line_count * 0.026)
-    fig.tight_layout(rect=(0, bottom_margin, 1, top_margin))
+    # Keep header/footer readable while maximizing chart area.
+    top_margin = max(0.89, 0.962 - status_line_count * 0.018)
+    bottom_margin = min(0.14, 0.018 + footer_line_count * 0.018)
+    fig.tight_layout(rect=(0.005, bottom_margin, 0.995, top_margin), pad=0.5)
     fig.suptitle(
         header_title,
         x=0.01,
-        y=0.992,
+        y=0.995,
         ha="left",
         va="top",
         fontsize=16,
@@ -470,7 +485,7 @@ def _apply_layout_with_header_footer(fig, header_title, header_status, footer_te
     )
     status_artist = fig.text(
         0.01,
-        0.962,
+        0.968,
         wrapped_status,
         transform=fig.transFigure,
         ha="left",
@@ -480,12 +495,12 @@ def _apply_layout_with_header_footer(fig, header_title, header_status, footer_te
     )
     fig.text(
         0.01,
-        0.01,
+        0.004,
         wrapped_footer,
         transform=fig.transFigure,
         ha="left",
         va="bottom",
-        fontsize=9,
+        fontsize=8,
         color="#475569",
     )
     return status_artist
@@ -595,7 +610,14 @@ if __name__ == "__main__":
                 if not options:
                     logger.warning(f"No option positions for {stock_code} on port {port}.")
                     ax.set_xlabel("Strike Date")
-                    ax.set_ylabel("Strike Price")
+                    if port_index == 0:
+                        ax.set_ylabel("Strike Price")
+                        ax.yaxis.set_label_position("left")
+                        ax.yaxis.tick_left()
+                    else:
+                        ax.set_ylabel("")
+                        ax.yaxis.set_label_position("right")
+                        ax.yaxis.tick_right()
                     ax.set_title(_panel_title(stock_code, port, delta_sum=delta_sum))
                     base_lines[key] = (None, None)
                     plot_states[key] = None
@@ -607,6 +629,8 @@ if __name__ == "__main__":
                     stock_code,
                     stock_price,
                     chart_title=_panel_title(stock_code, port, delta_sum=delta_sum),
+                    show_y_label=(port_index == 0),
+                    y_ticks_on_right=(port_index != 0),
                 )
                 base_lines[key] = (base_line, base_text)
                 plot_states[key] = state
@@ -728,6 +752,8 @@ if __name__ == "__main__":
                                         port,
                                         delta_sum=delta_sum,
                                     ),
+                                    show_y_label=(port_index == 0),
+                                    y_ticks_on_right=(port_index != 0),
                                 )
                                 plot_states[key] = state
                                 base_lines[key] = (base_line, base_text)

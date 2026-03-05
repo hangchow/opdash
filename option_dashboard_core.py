@@ -226,20 +226,6 @@ def _format_display_time(value):
     return dt.astimezone().strftime("%H:%M:%S")
 
 
-def _format_interval_seconds(value):
-    if value is None:
-        return "-"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "-"
-    if not np.isfinite(number):
-        return "-"
-    if abs(number - int(number)) < 1e-9:
-        return f"{int(number)}s"
-    return f"{number:g}s"
-
-
 def format_options_done_text(ports, options_done_at_by_port):
     ports_list = list(ports or [])
     if not ports_list:
@@ -264,16 +250,12 @@ def format_dashboard_status_text(
     options_done_at_by_port,
 ):
     generated_at_text = _format_display_datetime(generated_at)
-    ui_interval_text = _format_interval_seconds(ui_interval)
-    options_version_text = "-" if options_version is None else str(options_version)
     price_version_text = "-" if price_version is None else str(price_version)
     options_done_text = format_options_done_text(ports, options_done_at_by_port)
     return (
         f"updated: {generated_at_text} | "
-        f"ui_refresh={ui_interval_text} | "
-        f"options_v={options_version_text} "
-        f"price_v={price_version_text} | "
-        f"options_done={options_done_text}"
+        f"options_loaded={options_done_text} | "
+        f"price_v={price_version_text}"
     )
 
 

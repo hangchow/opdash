@@ -206,7 +206,7 @@ function updateHeader(snapshot) {
   const generatedAt = new Date(snapshot.generated_at).toLocaleString();
   const optionsDone = formatOptionsDoneTimes(snapshot);
   statusEl.textContent =
-    `updated: ${generatedAt} | options_v=${snapshot.versions.options} price_v=${snapshot.versions.price} | options_done=${optionsDone}`;
+    `updated: ${generatedAt} | options_loaded=${optionsDone} | price_v=${snapshot.versions.price}`;
 }
 
 function updateServerSettings(snapshot) {
@@ -260,6 +260,7 @@ function buildGrid(snapshot) {
 }
 
 function renderPanel(id, panel) {
+  const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
   const xVals = options.map((o) => o.strike_date);
   const yVals = options.map((o) => o.strike_price);
@@ -333,13 +334,12 @@ function renderPanel(id, panel) {
     });
     annotations.push({
       xref: "paper",
-      x: 0,
+      x: isLeftColumn ? 0.01 : 0.99,
       y: y0,
-      xanchor: "right",
+      xanchor: isLeftColumn ? "left" : "right",
       yanchor: "middle",
       text: y0.toFixed(2),
       showarrow: false,
-      xshift: -8,
       font: { color: "red", size: 11 },
     });
   }
@@ -359,7 +359,9 @@ function renderPanel(id, panel) {
   const layout = {
     template: "none",
     title: { text: panel.title, x: 0.5, xanchor: "center", font: { size: 14 } },
-    margin: { l: 70, r: 20, t: 58, b: 82 },
+    margin: isLeftColumn
+      ? { l: 70, r: 20, t: 58, b: 82 }
+      : { l: 36, r: 70, t: 58, b: 82 },
     xaxis: {
       title: { text: "Strike Date", font: { size: 14 } },
       type: "date",
@@ -373,7 +375,8 @@ function renderPanel(id, panel) {
       gridcolor: "#edf2f7",
     },
     yaxis: {
-      title: { text: "Strike Price", font: { size: 14 } },
+      title: isLeftColumn ? { text: "Strike Price", font: { size: 14 } } : undefined,
+      side: isLeftColumn ? "left" : "right",
       range: yRange,
       automargin: true,
       tickfont: { size: 12 },
