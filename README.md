@@ -9,6 +9,7 @@ Options position dashboard and plotting tool.
 - `option_dashboard_backend.py`: shared polling backend for GUI/Web
 - `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
 - `options.py`, `positions.py`, `stocks.py`: required local modules
+- `docs/screenshots/`: README screenshots for GUI/Web examples
 - [`docs/plot_positions_option.md`](docs/plot_positions_option.md): Matplotlib GUI usage guide
 - [`docs/plot_positions_option_web.md`](docs/plot_positions_option_web.md): web dashboard usage guide
 
@@ -29,19 +30,23 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Matplotlib GUI:
+Matplotlib GUI example (`US.UVIX`, compare ports `11111` and `22222`):
 
 ```bash
-python plot_positions_option.py US.AAPL
+python plot_positions_option.py US.UVIX --port 11111,22222
 ```
 
-Web dashboard:
+![Matplotlib GUI screenshot](docs/screenshots/plot_positions_option_uvix_11111_22222.png)
+
+Web dashboard example (`US.UVIX`, compare ports `11111` and `22222`):
 
 ```bash
-python plot_positions_option_web.py US.AAPL --web_host 127.0.0.1 --web_port 18080
+python plot_positions_option_web.py US.UVIX --port 11111,22222
 ```
 
 Then open `http://127.0.0.1:18080` in your browser.
+
+![Web dashboard screenshot](docs/screenshots/plot_positions_option_web_uvix_11111_22222.png)
 
 Enable Telegram short-close alerts (default threshold follows `--profit_highlight_threshold`, default `80`):
 
@@ -56,3 +61,4 @@ python plot_positions_option_web.py US.AAPL \
 - GUI and Web now share `option_dashboard_backend.py` + `option_dashboard_core.py` for backend logic.
 - Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
 - Telegram short-close alerts trigger only for `SHORT` options whose `pl_ratio` crosses the configured threshold (newly-hit only, de-duplicated).
+- Best-fit scenario: Most of your option positions are short positions.
