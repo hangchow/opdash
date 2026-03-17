@@ -21,8 +21,10 @@ from option_dashboard_core import (
     bind_parser_error_handler,
     build_dashboard_header_data,
     build_server_settings,
+    format_option_position_count_text,
     format_server_settings_text,
     get_dashboard_title,
+    get_option_position_counts,
     get_profit_highlight_threshold,
     make_telegram_short_close_alert_handler,
     _fmt_int,
@@ -233,6 +235,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             options = [_normalize_option(option) for option in raw_options]
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
             short_value = get_options_short_value_sum(raw_options)
+            position_counts = get_option_position_counts(raw_options)
             panels.append(
                 {
                     "port_index": port_index,
@@ -248,6 +251,9 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                     "short_value": short_value,
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
+                    "position_count_text": format_option_position_count_text(
+                        position_counts
+                    ),
                     "options": options,
                 }
             )

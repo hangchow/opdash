@@ -740,6 +740,42 @@ def _option_type_text(option_type):
     return ""
 
 
+def get_option_position_counts(options):
+    counts = {
+        "short_call": 0,
+        "short_put": 0,
+        "long_call": 0,
+        "long_put": 0,
+    }
+    for option in options or []:
+        count = abs(_safe_int(option.get("count"), 0))
+        if count == 0:
+            continue
+        side = _option_side(option)
+        option_type = _option_type_text(option.get("type"))
+        if side == SIDE_SHORT and option_type == "CALL":
+            counts["short_call"] += count
+        elif side == SIDE_SHORT and option_type == "PUT":
+            counts["short_put"] += count
+        elif side == SIDE_LONG and option_type == "CALL":
+            counts["long_call"] += count
+        elif side == SIDE_LONG and option_type == "PUT":
+            counts["long_put"] += count
+    return counts
+
+
+def format_option_position_count_text(counts):
+    counts = counts or {}
+    return " | ".join(
+        [
+            f"short call: {_safe_int(counts.get('short_call'), 0)}",
+            f"short put: {_safe_int(counts.get('short_put'), 0)}",
+            f"long call: {_safe_int(counts.get('long_call'), 0)}",
+            f"long put: {_safe_int(counts.get('long_put'), 0)}",
+        ]
+    )
+
+
 def get_options_delta_sum(options):
     # 参考 turtle/find_positions.py: sum(count * option_delta * contract_size)
     total_delta = 0.0
