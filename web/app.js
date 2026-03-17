@@ -364,6 +364,10 @@ function buildGrid(snapshot) {
 function renderPanel(id, panel) {
   const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
+  const countText =
+    typeof panel.position_count_text === "string" && panel.position_count_text.trim()
+      ? panel.position_count_text.trim()
+      : "short call: 0 | short put: 0 | long call: 0 | long put: 0";
   const xVals = options.map((o) => o.strike_date);
   const yVals = options.map((o) => o.strike_price);
   const sizes = options.map((o) => o.marker_size);
@@ -449,6 +453,23 @@ function renderPanel(id, panel) {
       font: { color: "#6b7280", size: 14 },
     });
   }
+
+  annotations.push({
+    xref: "paper",
+    yref: "paper",
+    x: 0.995,
+    y: 0.015,
+    xanchor: "right",
+    yanchor: "bottom",
+    text: countText,
+    showarrow: false,
+    font: { color: "#334155", size: 11 },
+    align: "right",
+    bgcolor: "rgba(255,255,255,0.82)",
+    bordercolor: "#cbd5e1",
+    borderwidth: 1,
+    borderpad: 3,
+  });
 
   const layout = {
     template: "none",

@@ -53,7 +53,7 @@ pip install futu-api matplotlib mplcursors numpy
 ## Command Syntax
 
 ```bash
-python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT]
+python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID]
 ```
 
 ### Required argument
@@ -94,6 +94,12 @@ python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--po
 - `--profit_highlight_threshold`
   Filled marker threshold percent. Default: `80`
 
+- `--telegram_bot_token`
+  Telegram bot token. Default: env `TELEGRAM_BOT_TOKEN`
+
+- `--telegram_chat_id`
+  Telegram chat id used for close-alert messages. Default: env `TELEGRAM_CHAT_ID`
+
 ## Quick Start Examples
 
 Single stock, single port:
@@ -130,6 +136,14 @@ Set filled-marker threshold to 70%:
 
 ```bash
 python plot_positions_option.py US.AAPL --profit_highlight_threshold 70
+```
+
+Enable Telegram close alerts for short options:
+
+```bash
+python plot_positions_option.py US.AAPL \
+  --telegram_bot_token <BOT_TOKEN> \
+  --telegram_chat_id <CHAT_ID>
 ```
 
 Show built-in help:

@@ -22,8 +22,11 @@ from option_dashboard_core import (
     bind_parser_error_handler,
     build_dashboard_header_data,
     build_server_settings,
+    format_option_position_count_text,
     format_server_settings_text,
     get_profit_highlight_threshold,
+    get_option_position_counts,
+    make_telegram_short_close_alert_handler,
     _fmt_int,
     _fmt_percent,
     _fmt_price,
@@ -80,6 +83,8 @@ def parse_args():
         args.ui_interval,
         args.price_mode,
         args.profit_highlight_threshold,
+        args.telegram_bot_token,
+        args.telegram_chat_id,
     )
 
 
@@ -339,6 +344,37 @@ def _add_marker_legend(fig, anchor_y=0.992):
     )
 
 
+def _panel_bottom_label(options):
+    return format_option_position_count_text(get_option_position_counts(options))
+
+
+def _draw_position_count_text(ax, options):
+    return ax.text(
+        0.995,
+        0.015,
+        _panel_bottom_label(options),
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=8.5,
+        color="#334155",
+        bbox={
+            "facecolor": "white",
+            "alpha": 0.82,
+            "edgecolor": "#cbd5e1",
+            "boxstyle": "round,pad=0.2",
+        },
+        clip_on=True,
+        zorder=5,
+    )
+
+
+def _update_position_count_text(text_artist, options):
+    if text_artist is None:
+        return
+    text_artist.set_text(_panel_bottom_label(options))
+
+
 def plot_chart(
     ax,
     options,
@@ -390,11 +426,14 @@ def plot_chart(
         "point_counts": point_counts,
         "last_annotation": None,
         "cursor": None,
+        "count_text": _draw_position_count_text(ax, options),
         "y_bounds_key": _strike_bounds_key(plot_data["y_all"]),
     }
 
     cursor = mplcursors.cursor([call_sc, put_sc], hover=True)
     state["cursor"] = cursor
+    if hasattr(cursor, "enabled"):
+        cursor.enabled = bool(plot_data["y_all"])
 
     @cursor.connect("add")
     def on_hover(sel):
@@ -487,6 +526,7 @@ def update_plot(ax, options, state, stock_price=None):
         else:
             _maybe_expand_panel_y_range_for_price(ax, y_all, stock_price)
     state["y_bounds_key"] = y_bounds_key
+    _update_position_count_text(state.get("count_text"), options)
 
 
 def draw_base_line(ax, y, price):
@@ -582,7 +622,11 @@ def _apply_layout_with_header_footer(fig, header_title, header_status, footer_te
     # Keep header/footer readable while maximizing chart area.
     top_margin = max(0.89, 0.962 - status_line_count * 0.018)
     bottom_margin = min(0.14, 0.018 + footer_line_count * 0.018)
-    fig.tight_layout(rect=(0.005, bottom_margin, 0.995, top_margin), pad=0.5)
+    fig.tight_layout(
+        rect=(0.005, bottom_margin, 0.995, top_margin),
+        pad=0.5,
+        h_pad=1.0,
+    )
     fig.suptitle(
         header_title,
         x=0.01,
@@ -625,12 +669,29 @@ if __name__ == "__main__":
         ui_interval,
         price_mode,
         profit_highlight_threshold,
+        telegram_bot_token,
+        telegram_chat_id,
     ) = parse_args()
     try:
         set_profit_highlight_threshold(profit_highlight_threshold)
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
+    short_alert_handler = make_telegram_short_close_alert_handler(
+        telegram_bot_token,
+        telegram_chat_id,
+        logger_obj=logger,
+    )
+    if short_alert_handler:
+        logger.info(
+            "Short close alerts enabled on Telegram at threshold %.2f%%",
+            profit_highlight_threshold,
+        )
+    elif str(telegram_bot_token).strip() or str(telegram_chat_id).strip():
+        logger.warning(
+            "Telegram short close alerts disabled: both --telegram_bot_token and "
+            "--telegram_chat_id are required"
+        )
     stock_codes = [s.strip() for s in stock_codes_str.split(",") if s.strip()]
     if not stock_codes:
         logger.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")
@@ -646,6 +707,7 @@ if __name__ == "__main__":
         ui_interval=ui_interval,
         price_mode=price_mode,
         profit_highlight_threshold=profit_highlight_threshold,
+        telegram_alert_enabled=bool(short_alert_handler),
     )
     startup_footer_text = format_server_settings_text(
         startup_settings, prefix="startup args"
@@ -686,6 +748,8 @@ if __name__ == "__main__":
         poll_purpose_prefix="poll_options",
         price_thread_name="poll_price",
         options_thread_name_prefix="poll_options_",
+        short_alert_threshold=profit_highlight_threshold if short_alert_handler else None,
+        short_alert_handler=short_alert_handler,
     )
 
     try:
@@ -721,26 +785,6 @@ if __name__ == "__main__":
 
                 if not options:
                     logger.warning(f"No option positions for {stock_code} on port {port}.")
-                    ax.set_xlabel("Strike Date")
-                    if port_index == 0:
-                        ax.set_ylabel("Strike Price")
-                        ax.yaxis.set_label_position("left")
-                        ax.yaxis.tick_left()
-                    else:
-                        ax.set_ylabel("")
-                        ax.yaxis.set_label_position("right")
-                        ax.yaxis.tick_right()
-                    ax.set_title(
-                        _panel_title(
-                            stock_code,
-                            port,
-                            delta_sum=delta_sum,
-                            short_value=short_value,
-                        )
-                    )
-                    base_lines[key] = (None, None)
-                    plot_states[key] = None
-                    continue
 
                 base_line, base_text, state = plot_chart(
                     ax,
@@ -889,7 +933,7 @@ if __name__ == "__main__":
                                     ax,
                                     options,
                                     stock_code,
-                                    None,
+                                    latest_prices_snapshot.get(stock_code),
                                     chart_title=_panel_title(
                                         stock_code,
                                         port,

@@ -48,8 +48,17 @@ Then open `http://127.0.0.1:18080` in your browser.
 
 ![Web dashboard screenshot](docs/screenshots/plot_positions_option_web_uvix_11111_22222.png)
 
+Enable Telegram short-close alerts (default threshold follows `--profit_highlight_threshold`, default `80`):
+
+```bash
+python plot_positions_option_web.py US.AAPL \
+  --telegram_bot_token <BOT_TOKEN> \
+  --telegram_chat_id <CHAT_ID>
+```
+
 ## Notes
 
 - GUI and Web now share `option_dashboard_backend.py` + `option_dashboard_core.py` for backend logic.
 - Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
+- Telegram short-close alerts trigger only for `SHORT` options whose `pl_ratio` crosses the configured threshold (newly-hit only, de-duplicated).
 - Best-fit scenario: Most of your option positions are short positions.
