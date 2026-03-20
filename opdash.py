@@ -12,8 +12,8 @@ from matplotlib import transforms
 from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
 
-from option_dashboard_backend import OptionDashboardBackend
-from option_dashboard_core import (
+from backend import OptionDashboardBackend
+from core import (
     HOLLOW_FACE_COLOR,
     LONG_POSITION_COLOR,
     SHORT_POSITION_COLOR,
@@ -52,7 +52,7 @@ from option_dashboard_core import (
 )
 from options import OptionEnum
 
-logger = logging.getLogger("plot_positions_option")  # 固定日志名，避免显示为 __main__
+logger = logging.getLogger("opdash")  # 固定日志名，避免显示为 __main__
 
 # 本脚本不再依赖 futu.yaml，改用命令行指定 host/port
 logging.basicConfig(

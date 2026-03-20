@@ -4,9 +4,9 @@ Options position dashboard and plotting tool.
 
 ## Contents
 
-- `plot_positions_option.py`: Matplotlib GUI visualization script (existing)
-- `plot_positions_option_web.py`: web dashboard entry
-- `option_dashboard_backend.py`: shared polling backend for GUI/Web
+- `opdash.py`: Matplotlib GUI visualization script (existing)
+- `opdash_web.py`: web dashboard entry
+- `backend.py`, `core.py`: shared backend logic for GUI/Web
 - `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
 - `options.py`, `positions.py`, `stocks.py`: required local modules
 - `docs/screenshots/`: README screenshots for GUI/Web examples
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 Matplotlib GUI example (`US.UVIX`, compare ports `11111` and `22222`):
 
 ```bash
-python plot_positions_option.py US.UVIX --port 11111,22222
+python opdash.py US.UVIX --port 11111,22222
 ```
 
 ![Matplotlib GUI screenshot](docs/screenshots/plot_positions_option_uvix_11111_22222.png)
@@ -41,7 +41,7 @@ python plot_positions_option.py US.UVIX --port 11111,22222
 Web dashboard example (`US.UVIX`, compare ports `11111` and `22222`):
 
 ```bash
-python plot_positions_option_web.py US.UVIX --port 11111,22222
+python opdash_web.py US.UVIX --port 11111,22222
 ```
 
 Then open `http://127.0.0.1:18080` in your browser.
@@ -51,14 +51,14 @@ Then open `http://127.0.0.1:18080` in your browser.
 Enable Telegram short-close alerts (default threshold follows `--profit_highlight_threshold`, default `80`):
 
 ```bash
-python plot_positions_option_web.py US.AAPL \
+python opdash_web.py US.AAPL \
   --telegram_bot_token <BOT_TOKEN> \
   --telegram_chat_id <CHAT_ID>
 ```
 
 ## Notes
 
-- GUI and Web now share `option_dashboard_backend.py` + `option_dashboard_core.py` for backend logic.
+- GUI and Web now share `backend.py` + `core.py` for backend logic.
 - Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
 - Telegram short-close alerts trigger only for `SHORT` options whose `pl_ratio` crosses the configured threshold (newly-hit only, de-duplicated).
 - Best-fit scenario: Most of your option positions are short positions.

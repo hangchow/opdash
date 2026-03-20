@@ -1,8 +1,8 @@
-# `plot_positions_option_web.py` Usage Guide
+# `opdash_web.py` Usage Guide
 
 ## Overview
 
-`plot_positions_option_web.py` starts a local web server and renders option positions in browser charts.
+`opdash_web.py` starts a local web server and renders option positions in browser charts.
 The page assets are independent files under `web/` (`index.html`, `styles.css`, `app.js`), not inline strings in Python.
 
 Display semantics are aligned with the Matplotlib version:
@@ -30,7 +30,7 @@ Both entries now share backend modules, while GUI interaction flow remains uncha
 ## Command Syntax
 
 ```bash
-python plot_positions_option_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID] [--web_host HOST] [--web_port PORT]
+python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID] [--web_host HOST] [--web_port PORT]
 ```
 
 ## Arguments
@@ -53,31 +53,31 @@ python plot_positions_option_web.py <stock_codes> [--host HOST] [--port PORTS] [
 Single stock, single port:
 
 ```bash
-python plot_positions_option_web.py US.AAPL
+python opdash_web.py US.AAPL
 ```
 
 Multiple stocks:
 
 ```bash
-python plot_positions_option_web.py "US.AAPL,US.TSLA,US.NVDA" --port 11111
+python opdash_web.py "US.AAPL,US.TSLA,US.NVDA" --port 11111
 ```
 
 Two ports side-by-side:
 
 ```bash
-python plot_positions_option_web.py "US.AAPL,US.TSLA" --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 2
+python opdash_web.py "US.AAPL,US.TSLA" --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 2
 ```
 
 Use 70% as filled-marker threshold:
 
 ```bash
-python plot_positions_option_web.py US.AAPL --profit_highlight_threshold 70
+python opdash_web.py US.AAPL --profit_highlight_threshold 70
 ```
 
 Enable Telegram close alerts for short options:
 
 ```bash
-python plot_positions_option_web.py US.AAPL \
+python opdash_web.py US.AAPL \
   --telegram_bot_token <BOT_TOKEN> \
   --telegram_chat_id <CHAT_ID>
 ```
@@ -90,7 +90,7 @@ http://127.0.0.1:18080
 
 ## Runtime Behavior
 
-- Shares backend modules (`option_dashboard_backend.py` + `option_dashboard_core.py`) with the Matplotlib GUI entry
+- Shares backend modules (`backend.py` + `core.py`) with the Matplotlib GUI entry
 - One options polling thread per Futu port
 - One shared stock-price polling thread
 - Telegram short-close alerts are emitted only when a short option newly crosses the threshold (deduplicated per option code)

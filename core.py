@@ -16,7 +16,7 @@ from futu import (RET_OK, OpenQuoteContext, OpenSecTradeContext, OptionType,
 from options import OptionEnum
 from positions import query_hold_positions
 
-logger = logging.getLogger("plot_positions_option")
+logger = logging.getLogger("opdash.core")
 
 DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD = 80.0
 PROFIT_HIGHLIGHT_THRESHOLD = DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD  # Highlight threshold

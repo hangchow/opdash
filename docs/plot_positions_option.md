@@ -1,4 +1,4 @@
-# `plot_positions_option.py` Usage Guide
+# `opdash.py` Usage Guide
 
 For the web dashboard entry, see [`docs/plot_positions_option_web.md`](plot_positions_option_web.md).
 
@@ -8,7 +8,7 @@ For the web dashboard entry, see [`docs/plot_positions_option_web.md`](plot_posi
 
 ## Overview
 
-`plot_positions_option.py` opens a live Matplotlib window to visualize your **option positions**.
+`opdash.py` opens a live Matplotlib window to visualize your **option positions**.
 
 For each stock:
 - X-axis: strike date
@@ -53,7 +53,7 @@ pip install futu-api matplotlib mplcursors numpy
 ## Command Syntax
 
 ```bash
-python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID]
+python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID]
 ```
 
 ### Required argument
@@ -105,43 +105,43 @@ python plot_positions_option.py <stock_codes> [--host HOST] [--port PORTS] [--po
 Single stock, single port:
 
 ```bash
-python plot_positions_option.py US.AAPL
+python opdash.py US.AAPL
 ```
 
 Multiple stocks, single port:
 
 ```bash
-python plot_positions_option.py "US.AAPL,US.TSLA,US.NVDA" --port 11111
+python opdash.py "US.AAPL,US.TSLA,US.NVDA" --port 11111
 ```
 
 Compare two ports side by side:
 
 ```bash
-python plot_positions_option.py "US.AAPL,US.TSLA" --host 127.0.0.1 --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 1
+python opdash.py "US.AAPL,US.TSLA" --host 127.0.0.1 --port 11111,11112 --poll_interval 8 --price_interval 3 --ui_interval 1
 ```
 
 Use default mode (`implied`) for best compatibility:
 
 ```bash
-python plot_positions_option.py US.AAPL
+python opdash.py US.AAPL
 ```
 
 Prefer pre-market / after-hours price when available:
 
 ```bash
-python plot_positions_option.py US.AAPL --price_mode auto
+python opdash.py US.AAPL --price_mode auto
 ```
 
 Set filled-marker threshold to 70%:
 
 ```bash
-python plot_positions_option.py US.AAPL --profit_highlight_threshold 70
+python opdash.py US.AAPL --profit_highlight_threshold 70
 ```
 
 Enable Telegram close alerts for short options:
 
 ```bash
-python plot_positions_option.py US.AAPL \
+python opdash.py US.AAPL \
   --telegram_bot_token <BOT_TOKEN> \
   --telegram_chat_id <CHAT_ID>
 ```
@@ -149,7 +149,7 @@ python plot_positions_option.py US.AAPL \
 Show built-in help:
 
 ```bash
-python plot_positions_option.py -h
+python opdash.py -h
 ```
 
 ## Runtime Behavior

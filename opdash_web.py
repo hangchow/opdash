@@ -10,8 +10,8 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from option_dashboard_backend import OptionDashboardBackend
-from option_dashboard_core import (
+from backend import OptionDashboardBackend
+from core import (
     HOLLOW_FACE_COLOR,
     LONG_POSITION_COLOR,
     SHORT_POSITION_COLOR,
@@ -53,7 +53,7 @@ from option_dashboard_core import (
 )
 from options import OptionEnum
 
-logger = logging.getLogger("plot_positions_option_web")
+logger = logging.getLogger("opdash_web")
 LOG_FORMAT = "%(asctime)s - %(threadName)s - %(levelname)s - %(name)s - %(message)s"
 logging.basicConfig(
     level=logging.INFO,

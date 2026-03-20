@@ -61,7 +61,7 @@ class OptionDashboardBackend:
         self.panel_key = panel_key
         self.pick_price_option_code = pick_price_option_code
 
-        self.logger = logger or logging.getLogger("option_dashboard_backend")
+        self.logger = logger or logging.getLogger("opdash.backend")
         self.init_purpose_prefix = init_purpose_prefix
         self.poll_purpose_prefix = poll_purpose_prefix
         self.price_thread_name = price_thread_name
