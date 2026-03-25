@@ -57,7 +57,7 @@ logger = logging.getLogger("opdash")  # 固定日志名，避免显示为 __main
 # 本脚本不再依赖 futu.yaml，改用命令行指定 host/port
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(threadName)s - %(levelname)s - %(message)s"  # 日志以线程名为主，避免 __main__ 噪音
+    format="%(asctime)s - %(threadName)-20s - %(levelname)-5s - %(message)s"  # 固定列宽，便于扫描多线程日志
 )
 Y_RANGE_PAD_RATIO = 0.1
 Y_RANGE_EDGE_TRIGGER_RATIO = 0.1

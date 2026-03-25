@@ -54,7 +54,7 @@ from core import (
 from options import OptionEnum
 
 logger = logging.getLogger("opdash_web")
-LOG_FORMAT = "%(asctime)s - %(threadName)s - %(levelname)s - %(name)s - %(message)s"
+LOG_FORMAT = "%(asctime)s - %(threadName)-20s - %(levelname)-5s - %(name)s - %(message)s"
 logging.basicConfig(
     level=logging.INFO,
     format=LOG_FORMAT,
