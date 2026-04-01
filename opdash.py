@@ -375,6 +375,24 @@ def _update_position_count_text(text_artist, options):
     text_artist.set_text(_panel_bottom_label(options))
 
 
+def _format_panel_title_for_axes(title_text):
+    text = str(title_text or "").strip()
+    if not text:
+        return text
+    if " | " in text:
+        head, tail = text.split(" | ", 1)
+        return f"{head}\n{tail}"
+    return text
+
+
+def _apply_panel_title(ax, title_text, stock_code):
+    ax.set_title(
+        _format_panel_title_for_axes(title_text or f"{stock_code} Option Positions"),
+        fontsize=9.5,
+        pad=9,
+    )
+
+
 def plot_chart(
     ax,
     options,
@@ -417,7 +435,7 @@ def plot_chart(
     else:
         ax.yaxis.set_label_position("left")
         ax.yaxis.tick_left()
-    ax.set_title(chart_title or f"{stock_code} Option Positions")
+    _apply_panel_title(ax, chart_title, stock_code)
     _apply_axis_y_range(ax, _compute_panel_y_range(plot_data["y_all"], stock_price))
 
     state = {
@@ -761,6 +779,7 @@ if __name__ == "__main__":
         initial_prices = backend_state["prices"]
         initial_price_done_at = backend_state.get("price_done_at")
         initial_delta_sum_by_panel = backend_state.get("delta_sum_by_panel", {})
+        initial_stock_shares_by_panel = backend_state.get("stock_shares_by_panel", {})
         initial_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
         initial_header = build_dashboard_header_data(
             ui_interval=ui_interval,
@@ -780,6 +799,10 @@ if __name__ == "__main__":
                 ax = axs[row_index][port_index]
                 options = initial_options_by_panel.get(key, [])
                 stock_price = initial_prices.get(stock_code)
+                stock_share_count = _safe_float(
+                    initial_stock_shares_by_panel.get(key),
+                    0.0,
+                )
                 delta_sum = _safe_float(initial_delta_sum_by_panel.get(key), 0.0)
                 short_value = get_options_short_value_sum(options)
 
@@ -794,6 +817,7 @@ if __name__ == "__main__":
                     chart_title=_panel_title(
                         stock_code,
                         port,
+                        stock_share_count=stock_share_count,
                         delta_sum=delta_sum,
                         short_value=short_value,
                     ),
@@ -825,6 +849,10 @@ if __name__ == "__main__":
             key: _safe_float(delta, 0.0)
             for key, delta in initial_delta_sum_by_panel.items()
         }
+        last_drawn_stock_shares = {
+            key: _safe_float(stock_shares, 0.0)
+            for key, stock_shares in initial_stock_shares_by_panel.items()
+        }
         last_drawn_short_value = {
             key: get_options_short_value_sum(options)
             for key, options in initial_options_by_panel.items()
@@ -844,6 +872,7 @@ if __name__ == "__main__":
             latest_options_sig_snapshot = backend_state["options_sig"]
             latest_hover_sig_snapshot = backend_state["hover_sig"]
             latest_delta_sum_snapshot = backend_state.get("delta_sum_by_panel", {})
+            latest_stock_shares_snapshot = backend_state.get("stock_shares_by_panel", {})
             latest_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
             latest_options_version = backend_state["options_version"]
             latest_price_version = backend_state["price_version"]
@@ -871,6 +900,14 @@ if __name__ == "__main__":
                             key = _panel_key(port_index, stock_code)
                             ax = axs[row_index][port_index]
                             options = latest_options_snapshot.get(key, [])
+                            stock_share_count = _safe_float(
+                                latest_stock_shares_snapshot.get(key),
+                                0.0,
+                            )
+                            prev_stock_share_count = _safe_float(
+                                last_drawn_stock_shares.get(key),
+                                0.0,
+                            )
                             delta_sum = _safe_float(latest_delta_sum_snapshot.get(key), 0.0)
                             prev_delta_sum = _safe_float(last_drawn_delta_sum.get(key), 0.0)
                             short_value = get_options_short_value_sum(options)
@@ -878,17 +915,24 @@ if __name__ == "__main__":
                                 last_drawn_short_value.get(key), 0.0
                             )
                             if (
+                                round(prev_stock_share_count, 6)
+                                != round(stock_share_count, 6)
+                                or
                                 round(prev_delta_sum, 3) != round(delta_sum, 3)
                                 or round(prev_short_value, 2) != round(short_value, 2)
                             ):
-                                ax.set_title(
+                                _apply_panel_title(
+                                    ax,
                                     _panel_title(
                                         stock_code,
                                         port,
+                                        stock_share_count=stock_share_count,
                                         delta_sum=delta_sum,
                                         short_value=short_value,
-                                    )
+                                    ),
+                                    stock_code,
                                 )
+                                last_drawn_stock_shares[key] = stock_share_count
                                 last_drawn_delta_sum[key] = delta_sum
                                 last_drawn_short_value[key] = short_value
                                 need_redraw = True
@@ -937,6 +981,7 @@ if __name__ == "__main__":
                                     chart_title=_panel_title(
                                         stock_code,
                                         port,
+                                        stock_share_count=stock_share_count,
                                         delta_sum=delta_sum,
                                         short_value=short_value,
                                     ),

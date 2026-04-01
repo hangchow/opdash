@@ -372,6 +372,16 @@ def _fmt_int(value):
     return f"{num}"
 
 
+def _fmt_quantity(value):
+    num = _safe_float(value, None)
+    if num is None:
+        return "N/A"
+    rounded = round(num)
+    if abs(num - rounded) < 1e-9:
+        return f"{int(rounded)}"
+    return f"{num:.3f}".rstrip("0").rstrip(".")
+
+
 def _fmt_percent(value):
     num = _safe_float(value, None)
     if num is None:
@@ -1079,9 +1089,11 @@ def _panel_key(port_index, stock_code):
     return (port_index, stock_code)
 
 
-def _panel_title(stock_code, port, delta_sum=None, short_value=None):
+def _panel_title(stock_code, port, stock_share_count=None, delta_sum=None, short_value=None):
     title = f"{stock_code} Option Positions (Port {port})"
     metrics = []
+    if stock_share_count is not None:
+        metrics.append(f"shares={_fmt_quantity(stock_share_count)}")
     if delta_sum is not None:
         metrics.append(f"delta={_safe_float(delta_sum, 0.0):+.3f}")
     if short_value is not None:

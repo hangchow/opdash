@@ -91,6 +91,7 @@ class OptionDashboardBackend:
         self.latest_option_code = {}
         self.latest_price_option_code = {}
         self.latest_delta_sum_by_panel = {}
+        self.latest_stock_shares_by_panel = {}
         self.options_done_at_by_port = {}
         self.short_alert_hits_by_port = {port: set() for port in self.ports}
         self.price_done_at = None
@@ -194,6 +195,7 @@ class OptionDashboardBackend:
             initial_hover_signatures = {}
             initial_price_option_codes = {}
             initial_delta_sum_by_panel = {}
+            initial_stock_shares_by_panel = {}
 
             for port_index, port in enumerate(self.ports):
                 trade_ctx = self.trade_ctxs[port]
@@ -240,6 +242,9 @@ class OptionDashboardBackend:
                     initial_option_code_by_panel[key] = option_code
                     initial_plot_signatures[key] = self.options_signature(options)
                     initial_hover_signatures[key] = self.options_hover_signature(options)
+                    initial_stock_shares_by_panel[key] = stock_share_delta_map.get(
+                        stock_code, 0.0
+                    )
                     initial_delta_sum_by_panel[key] = (
                         stock_share_delta_map.get(stock_code, 0.0)
                         + self.get_options_delta_sum(options)
@@ -271,6 +276,7 @@ class OptionDashboardBackend:
                 self.latest_options_sig = dict(initial_plot_signatures)
                 self.latest_hover_sig = dict(initial_hover_signatures)
                 self.latest_delta_sum_by_panel = dict(initial_delta_sum_by_panel)
+                self.latest_stock_shares_by_panel = dict(initial_stock_shares_by_panel)
                 for stock_code in self.stock_codes:
                     self.latest_price_option_code[stock_code] = self.pick_price_option_code(
                         stock_code,
@@ -332,6 +338,7 @@ class OptionDashboardBackend:
             options_sig_snapshot = dict(self.latest_options_sig)
             hover_sig_snapshot = dict(self.latest_hover_sig)
             delta_sum_by_panel_snapshot = dict(self.latest_delta_sum_by_panel)
+            stock_shares_by_panel_snapshot = dict(self.latest_stock_shares_by_panel)
             options_done_at_by_port_snapshot = dict(self.options_done_at_by_port)
         with self.version_lock:
             options_version = self.options_version
@@ -343,6 +350,7 @@ class OptionDashboardBackend:
             "options_sig": options_sig_snapshot,
             "hover_sig": hover_sig_snapshot,
             "delta_sum_by_panel": delta_sum_by_panel_snapshot,
+            "stock_shares_by_panel": stock_shares_by_panel_snapshot,
             "options_done_at_by_port": options_done_at_by_port_snapshot,
             "options_version": options_version,
             "price_version": price_version,
@@ -439,6 +447,9 @@ class OptionDashboardBackend:
                         self.latest_option_code[key] = option_code_snapshot.get(stock_code)
                         self.latest_options_sig[key] = options_sig_snapshot.get(stock_code, ())
                         self.latest_hover_sig[key] = hover_sig_snapshot.get(stock_code, ())
+                        self.latest_stock_shares_by_panel[key] = stock_share_delta_map.get(
+                            stock_code, 0.0
+                        )
                         self.latest_delta_sum_by_panel[key] = (
                             stock_share_delta_map.get(stock_code, 0.0)
                             + self.get_options_delta_sum(options)

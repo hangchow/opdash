@@ -222,6 +222,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     prices_snapshot = state["prices"]
     options_snapshot = state["options"]
     delta_sum_by_panel = state.get("delta_sum_by_panel", {})
+    stock_shares_by_panel = state.get("stock_shares_by_panel", {})
     options_done_at_by_port = state.get("options_done_at_by_port", {})
     price_done_at = state.get("price_done_at")
     options_version = state["options_version"]
@@ -233,6 +234,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             key = _panel_key(port_index, stock_code)
             raw_options = options_snapshot.get(key, [])
             options = [_normalize_option(option) for option in raw_options]
+            stock_share_count = _safe_float(stock_shares_by_panel.get(key), 0.0)
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
             short_value = get_options_short_value_sum(raw_options)
             position_counts = get_option_position_counts(raw_options)
@@ -244,9 +246,11 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                     "title": _panel_title(
                         stock_code,
                         port,
+                        stock_share_count=stock_share_count,
                         delta_sum=delta_sum,
                         short_value=short_value,
                     ),
+                    "stock_share_count": stock_share_count,
                     "delta_sum": delta_sum,
                     "short_value": short_value,
                     "has_data": bool(options),
