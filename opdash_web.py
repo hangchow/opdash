@@ -256,7 +256,8 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
                     "position_count_text": format_option_position_count_text(
-                        position_counts
+                        position_counts,
+                        stock_share_count=stock_share_count,
                     ),
                     "options": options,
                 }

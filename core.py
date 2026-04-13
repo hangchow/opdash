@@ -774,9 +774,12 @@ def get_option_position_counts(options):
     return counts
 
 
-def format_option_position_count_text(counts):
+def format_option_position_count_text(counts, stock_share_count=None):
     counts = counts or {}
-    return " | ".join(
+    parts = []
+    if stock_share_count is not None:
+        parts.append(f"shares={_fmt_quantity(stock_share_count)}")
+    parts.extend(
         [
             f"short call: {_safe_int(counts.get('short_call'), 0)}",
             f"short put: {_safe_int(counts.get('short_put'), 0)}",
@@ -784,6 +787,7 @@ def format_option_position_count_text(counts):
             f"long put: {_safe_int(counts.get('long_put'), 0)}",
         ]
     )
+    return " | ".join(parts)
 
 
 def get_options_delta_sum(options):
@@ -1092,8 +1096,6 @@ def _panel_key(port_index, stock_code):
 def _panel_title(stock_code, port, stock_share_count=None, delta_sum=None, short_value=None):
     title = f"{stock_code} Option Positions (Port {port})"
     metrics = []
-    if stock_share_count is not None:
-        metrics.append(f"shares={_fmt_quantity(stock_share_count)}")
     if delta_sum is not None:
         metrics.append(f"delta={_safe_float(delta_sum, 0.0):+.3f}")
     if short_value is not None:

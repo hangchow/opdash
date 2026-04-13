@@ -344,15 +344,18 @@ def _add_marker_legend(fig, anchor_y=0.992):
     )
 
 
-def _panel_bottom_label(options):
-    return format_option_position_count_text(get_option_position_counts(options))
+def _panel_bottom_label(options, stock_share_count=None):
+    return format_option_position_count_text(
+        get_option_position_counts(options),
+        stock_share_count=stock_share_count,
+    )
 
 
-def _draw_position_count_text(ax, options):
+def _draw_position_count_text(ax, options, stock_share_count=None):
     return ax.text(
         0.995,
         0.015,
-        _panel_bottom_label(options),
+        _panel_bottom_label(options, stock_share_count=stock_share_count),
         transform=ax.transAxes,
         ha="right",
         va="bottom",
@@ -369,10 +372,12 @@ def _draw_position_count_text(ax, options):
     )
 
 
-def _update_position_count_text(text_artist, options):
+def _update_position_count_text(text_artist, options, stock_share_count=None):
     if text_artist is None:
         return
-    text_artist.set_text(_panel_bottom_label(options))
+    text_artist.set_text(
+        _panel_bottom_label(options, stock_share_count=stock_share_count)
+    )
 
 
 def _format_panel_title_for_axes(title_text):
@@ -398,6 +403,7 @@ def plot_chart(
     options,
     stock_code,
     stock_price=None,
+    stock_share_count=None,
     chart_title=None,
     show_y_label=True,
     y_ticks_on_right=False,
@@ -444,7 +450,11 @@ def plot_chart(
         "point_counts": point_counts,
         "last_annotation": None,
         "cursor": None,
-        "count_text": _draw_position_count_text(ax, options),
+        "count_text": _draw_position_count_text(
+            ax,
+            options,
+            stock_share_count=stock_share_count,
+        ),
         "y_bounds_key": _strike_bounds_key(plot_data["y_all"]),
     }
 
@@ -493,7 +503,7 @@ def plot_chart(
     return base_line, base_text, state
 
 
-def update_plot(ax, options, state, stock_price=None):
+def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
     # 仅更新散点数据与坐标轴，不重建对象
     plot_data = _compute_plot_data(options)
     call_sc = state["call_sc"]
@@ -544,7 +554,11 @@ def update_plot(ax, options, state, stock_price=None):
         else:
             _maybe_expand_panel_y_range_for_price(ax, y_all, stock_price)
     state["y_bounds_key"] = y_bounds_key
-    _update_position_count_text(state.get("count_text"), options)
+    _update_position_count_text(
+        state.get("count_text"),
+        options,
+        stock_share_count=stock_share_count,
+    )
 
 
 def draw_base_line(ax, y, price):
@@ -814,6 +828,7 @@ if __name__ == "__main__":
                     options,
                     stock_code,
                     stock_price,
+                    stock_share_count=stock_share_count,
                     chart_title=_panel_title(
                         stock_code,
                         port,
@@ -932,6 +947,14 @@ if __name__ == "__main__":
                                     ),
                                     stock_code,
                                 )
+                                if round(prev_stock_share_count, 6) != round(
+                                    stock_share_count, 6
+                                ):
+                                    _update_position_count_text(
+                                        state.get("count_text") if state else None,
+                                        options,
+                                        stock_share_count=stock_share_count,
+                                    )
                                 last_drawn_stock_shares[key] = stock_share_count
                                 last_drawn_delta_sum[key] = delta_sum
                                 last_drawn_short_value[key] = short_value
@@ -959,7 +982,12 @@ if __name__ == "__main__":
 
                             if not options:
                                 if state is not None:
-                                    update_plot(ax, options, state)
+                                    update_plot(
+                                        ax,
+                                        options,
+                                        state,
+                                        stock_share_count=stock_share_count,
+                                    )
                                     need_redraw = True
                                 line, text = base_lines.get(key, (None, None))
                                 if line is not None:
@@ -978,6 +1006,7 @@ if __name__ == "__main__":
                                     options,
                                     stock_code,
                                     latest_prices_snapshot.get(stock_code),
+                                    stock_share_count=stock_share_count,
                                     chart_title=_panel_title(
                                         stock_code,
                                         port,
@@ -997,6 +1026,7 @@ if __name__ == "__main__":
                                     options,
                                     state,
                                     stock_price=latest_prices_snapshot.get(stock_code),
+                                    stock_share_count=stock_share_count,
                                 )
                                 need_redraw = True
                             last_drawn_options[key] = plot_signature

@@ -15,6 +15,18 @@ const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
 const Y_RANGE_MIN_PAD = 1.0;
 const panelYRangeState = new Map();
 
+function formatQuantity(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return "N/A";
+  }
+  const rounded = Math.round(num);
+  if (Math.abs(num - rounded) < 1e-9) {
+    return String(rounded);
+  }
+  return num.toFixed(3).replace(/\.?0+$/, "");
+}
+
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
@@ -367,7 +379,7 @@ function renderPanel(id, panel) {
   const countText =
     typeof panel.position_count_text === "string" && panel.position_count_text.trim()
       ? panel.position_count_text.trim()
-      : "short call: 0 | short put: 0 | long call: 0 | long put: 0";
+      : `shares=${formatQuantity(panel.stock_share_count)} | short call: 0 | short put: 0 | long call: 0 | long put: 0`;
   const xVals = options.map((o) => o.strike_date);
   const yVals = options.map((o) => o.strike_price);
   const sizes = options.map((o) => o.marker_size);
