@@ -46,7 +46,9 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sum,
     get_stock_share_delta_map,
+    infer_trade_market_filter,
     parse_ports_arg,
+    parse_stock_codes_arg,
     safe_quote_ctx,
     safe_trade_ctx,
     set_profit_highlight_threshold,
@@ -79,10 +81,7 @@ def parse_args():
     bind_parser_error_handler(parser)
     args = parser.parse_args()
 
-    stock_codes = [s.strip() for s in args.stock_codes.split(",") if s.strip()]
-    if not stock_codes:
-        parser.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")
-
+    stock_codes = parse_stock_codes_arg(args.stock_codes, parser)
     ports = parse_ports_arg(args.port, parser, logger_obj=logger, max_ports=2)
 
     return {
@@ -332,6 +331,7 @@ def main():
         args["telegram_chat_id"],
         logger_obj=logger,
     )
+    trade_market_filter = infer_trade_market_filter(args["stock_codes"])
     if short_alert_handler:
         logger.info(
             "Short close alerts enabled on Telegram at threshold %.2f%%",
@@ -362,6 +362,7 @@ def main():
         poll_interval=args["poll_interval"],
         price_interval=args["price_interval"],
         price_mode=args["price_mode"],
+        trade_market_filter=trade_market_filter,
         safe_trade_ctx=safe_trade_ctx,
         safe_quote_ctx=safe_quote_ctx,
         query_positions_with_log=_query_positions_with_log,

@@ -17,6 +17,7 @@ class OptionDashboardBackend:
         poll_interval,
         price_interval,
         price_mode,
+        trade_market_filter,
         safe_trade_ctx,
         safe_quote_ctx,
         query_positions_with_log,
@@ -44,6 +45,7 @@ class OptionDashboardBackend:
         self.poll_interval = poll_interval
         self.price_interval = price_interval
         self.price_mode = price_mode
+        self.trade_market_filter = trade_market_filter
         self.port_count = len(self.ports)
 
         # Injected callables from existing implementation.
@@ -181,7 +183,11 @@ class OptionDashboardBackend:
         try:
             for port in self.ports:
                 self.trade_ctxs[port] = self.exit_stack.enter_context(
-                    self.safe_trade_ctx(self.host, port)
+                    self.safe_trade_ctx(
+                        self.host,
+                        port,
+                        filter_trdmarket=self.trade_market_filter,
+                    )
                 )
                 self.quote_ctxs[port] = self.exit_stack.enter_context(
                     self.safe_quote_ctx(self.host, port)
@@ -212,26 +218,18 @@ class OptionDashboardBackend:
                     trade_ctx,
                     self.stock_codes,
                     positions=positions_snapshot,
+                    quote_ctx=quote_ctx,
+                    quote_lock=quote_lock,
                 )
                 startup_short_alerts = self._collect_new_short_close_alerts(
                     port, options_snapshot
                 )
                 self._emit_short_close_alerts(port, startup_short_alerts)
-
-                option_quotes = self.get_option_quotes_batch(
-                    quote_ctx,
-                    [
-                        option["code"]
-                        for options in options_snapshot.values()
-                        for option in options
-                    ],
-                    quote_lock=quote_lock,
-                )
-                for options in options_snapshot.values():
-                    self.merge_option_quotes(options, option_quotes)
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
                     self.stock_codes,
+                    quote_ctx=quote_ctx,
+                    quote_lock=quote_lock,
                 )
 
                 for stock_code in self.stock_codes:
@@ -404,6 +402,8 @@ class OptionDashboardBackend:
                     trade_ctx,
                     self.stock_codes,
                     positions=positions_snapshot,
+                    quote_ctx=quote_ctx,
+                    quote_lock=quote_lock,
                 )
                 new_short_alerts = self._collect_new_short_close_alerts(
                     port, options_snapshot
@@ -414,20 +414,11 @@ class OptionDashboardBackend:
                     for stock_code, options in options_snapshot.items()
                 }
 
-                option_quotes = self.get_option_quotes_batch(
-                    quote_ctx,
-                    [
-                        option["code"]
-                        for options in options_snapshot.values()
-                        for option in options
-                    ],
-                    quote_lock=quote_lock,
-                )
-                for options in options_snapshot.values():
-                    self.merge_option_quotes(options, option_quotes)
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
                     self.stock_codes,
+                    quote_ctx=quote_ctx,
+                    quote_lock=quote_lock,
                 )
 
                 options_sig_snapshot = {

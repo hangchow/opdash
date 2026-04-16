@@ -45,7 +45,9 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sum,
     get_stock_share_delta_map,
+    infer_trade_market_filter,
     parse_ports_arg,
+    parse_stock_codes_arg,
     safe_quote_ctx,
     safe_trade_ctx,
     set_profit_highlight_threshold,
@@ -75,7 +77,7 @@ def parse_args():
     args = parser.parse_args()
     ports = parse_ports_arg(args.port, parser, logger_obj=logger, max_ports=2)
     return (
-        args.stock_codes,
+        parse_stock_codes_arg(args.stock_codes, parser),
         args.host,
         ports,
         args.poll_interval,
@@ -724,10 +726,8 @@ if __name__ == "__main__":
             "Telegram short close alerts disabled: both --telegram_bot_token and "
             "--telegram_chat_id are required"
         )
-    stock_codes = [s.strip() for s in stock_codes_str.split(",") if s.strip()]
-    if not stock_codes:
-        logger.error("No valid stock codes provided. Example: US.AAPL,US.TSLA")
-        sys.exit(1)
+    stock_codes = parse_stock_codes_arg(stock_codes_str)
+    trade_market_filter = infer_trade_market_filter(stock_codes)
     started_at = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     startup_settings = build_server_settings(
         started_at=started_at,
@@ -762,6 +762,7 @@ if __name__ == "__main__":
         poll_interval=poll_interval,
         price_interval=price_interval,
         price_mode=price_mode,
+        trade_market_filter=trade_market_filter,
         safe_trade_ctx=safe_trade_ctx,
         safe_quote_ctx=safe_quote_ctx,
         query_positions_with_log=_query_positions_with_log,

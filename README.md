@@ -36,6 +36,18 @@ Matplotlib GUI example (`US.UVIX`, compare ports `11111` and `22222`):
 python opdash.py US.UVIX --port 11111,22222
 ```
 
+Hong Kong stock example (`HK.00700`, compare ports `11111` and `22222`):
+
+```bash
+python opdash.py HK.00700 --port 11111,22222 --profit_highlight_threshold 70
+```
+
+Hong Kong alias example (`HK.TCH` also supported):
+
+```bash
+python opdash.py HK.TCH --port 11111,22222 --profit_highlight_threshold 70
+```
+
 ![Matplotlib GUI screenshot](docs/screenshots/plot_positions_option_uvix_11111_22222.png)
 
 Web dashboard example (`US.UVIX`, compare ports `11111` and `22222`):

@@ -32,6 +32,7 @@ US_REGULAR_MARKET_STATES = {"AFTERNOON"}
 US_AFTER_HOURS_STATES = {"AFTER_HOURS_BEGIN"}
 US_OVERNIGHT_STATES = {"OVERNIGHT", "AFTER_HOURS_END"}
 DASHBOARD_TITLE = "Option Positions Dashboard"
+HK_NUMERIC_STOCK_CODE_RE = re.compile(r"^HK\.(\d{1,5})$", re.IGNORECASE)
 
 
 def bind_parser_error_handler(parser):
@@ -47,7 +48,7 @@ def bind_parser_error_handler(parser):
 def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (default: 5)"):
     parser.add_argument(
         "stock_codes",
-        help="stock codes (e.g., US.UVXY) that options belong to",
+        help="stock codes (e.g., US.UVXY, HK.00700, HK.TCH) that options belong to",
     )
     parser.add_argument(
         "--host",
@@ -142,6 +143,49 @@ def add_web_server_args(parser):
         default=18080,
         help="web server port (default: 18080)",
     )
+
+
+def normalize_stock_code(raw_code):
+    code_text = str(raw_code or "").strip().upper()
+    if not code_text:
+        return ""
+    matched = HK_NUMERIC_STOCK_CODE_RE.fullmatch(code_text)
+    if matched:
+        return f"HK.{matched.group(1).zfill(5)}"
+    return code_text
+
+
+def parse_stock_codes_arg(raw_stock_codes, parser=None):
+    stock_codes = []
+    if isinstance(raw_stock_codes, (list, tuple, set)):
+        raw_values = list(raw_stock_codes)
+    else:
+        raw_values = str(raw_stock_codes or "").split(",")
+    for raw_code in raw_values:
+        code_text = normalize_stock_code(raw_code)
+        if code_text:
+            stock_codes.append(code_text)
+    stock_codes = list(dict.fromkeys(stock_codes))
+    if stock_codes:
+        return stock_codes
+    message = "No valid stock codes provided. Example: US.AAPL,HK.00700,HK.TCH"
+    if parser is not None:
+        parser.error(message)
+    raise ValueError(message)
+
+
+def infer_trade_market_filter(stock_codes):
+    markets = {
+        normalize_stock_code(stock_code).split(".", 1)[0]
+        for stock_code in stock_codes or []
+        if "." in normalize_stock_code(stock_code)
+    }
+    if not markets:
+        return TrdMarket.US
+    if len(markets) > 1:
+        return TrdMarket.NONE
+    market = next(iter(markets))
+    return getattr(TrdMarket, market, TrdMarket.NONE)
 
 
 def build_server_settings(
@@ -580,7 +624,13 @@ def safe_quote_ctx(host, port):
 def safe_trade_ctx(host, port, filter_trdmarket=TrdMarket.US):
     ctx = None
     try:
-        logger.info("Initializing OpenSecTradeContext for US market.")
+        market_filter_text = (
+            "NONE" if filter_trdmarket == TrdMarket.NONE else str(filter_trdmarket)
+        )
+        logger.info(
+            "Initializing OpenSecTradeContext for market filter %s.",
+            market_filter_text,
+        )
         ctx = OpenSecTradeContext(
             filter_trdmarket=filter_trdmarket,
             host=host,
@@ -631,94 +681,279 @@ def _query_positions_with_log(trade_ctx, trade_lock=None, purpose=""):
         raise
 
 
-def _build_stock_code_targets(stock_codes):
-    full_code_targets = {}
-    bare_code_targets = {}
-    for stock_code in list(dict.fromkeys(stock_codes)):
-        code_text = str(stock_code).strip().upper()
-        if not code_text:
-            continue
-        bare_code = code_text.split(".")[-1]
-        full_code_targets.setdefault(code_text, []).append(stock_code)
-        bare_code_targets.setdefault(bare_code, []).append(stock_code)
-    return full_code_targets, bare_code_targets
-
-
-def _resolve_stock_targets(raw_code, full_code_targets, bare_code_targets):
-    code_text = str(raw_code).strip().upper()
+def _stock_code_aliases(raw_code):
+    code_text = normalize_stock_code(raw_code)
     if not code_text:
-        return []
-    targets = full_code_targets.get(code_text)
-    if targets:
-        return targets
-    return bare_code_targets.get(code_text.split(".")[-1], [])
+        return set()
+    aliases = {code_text}
+    if "." in code_text:
+        market, symbol = code_text.split(".", 1)
+        aliases.add(symbol)
+        if market == "HK" and symbol.isdigit():
+            normalized_symbol = symbol.zfill(5)
+            trimmed_symbol = str(int(symbol))
+            aliases.update(
+                {
+                    normalized_symbol,
+                    trimmed_symbol,
+                    f"HK.{normalized_symbol}",
+                    f"HK.{trimmed_symbol}",
+                }
+            )
+    elif code_text.isdigit():
+        normalized_symbol = code_text.zfill(5)
+        trimmed_symbol = str(int(code_text))
+        aliases.update({normalized_symbol, trimmed_symbol})
+    return {alias.upper() for alias in aliases if alias}
 
 
-def _get_options_map_from_positions(positions, stock_codes):
-    # 单次遍历持仓快照，按标的聚合期权，避免“每个标的都全表扫描”
-    stock_codes = list(dict.fromkeys(stock_codes))
-    options_map = {stock_code: [] for stock_code in stock_codes}
-    hit_codes_map = {stock_code: set() for stock_code in stock_codes}
-    full_code_targets, bare_code_targets = _build_stock_code_targets(stock_codes)
+def _normalize_strike_date(raw_value):
+    raw_text = str(raw_value or "").strip()
+    if not raw_text:
+        return None
+    for fmt in ("%y%m%d", "%Y%m%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw_text, fmt).strftime("%y%m%d")
+        except ValueError:
+            continue
+    return None
 
+
+def _coerce_option_enum(option_type):
+    if option_type == OptionEnum.PUT or option_type == OptionType.PUT:
+        return OptionEnum.PUT
+    if option_type == OptionEnum.CALL or option_type == OptionType.CALL:
+        return OptionEnum.CALL
+    raw = str(option_type or "").strip().upper()
+    if raw.endswith(".PUT") or raw == "PUT":
+        return OptionEnum.PUT
+    if raw.endswith(".CALL") or raw == "CALL":
+        return OptionEnum.CALL
+    if raw == "P":
+        return OptionEnum.PUT
+    if raw == "C":
+        return OptionEnum.CALL
+    return None
+
+
+def _parse_option_code_fields(code):
+    code_text = str(code or "").strip().upper()
+    if not code_text:
+        return None
+    code_segs = re.split(r'(\d+)', code_text)
+    if len(code_segs) <= 3:
+        return None
+    option_type = _coerce_option_enum(code_segs[2] if len(code_segs) > 2 else None)
+    if option_type is None:
+        return None
+    strike_price = _safe_float(code_segs[3] if len(code_segs) > 3 else None, None)
+    if strike_price is not None:
+        strike_price = strike_price / 1000
+    return {
+        "stock_code_hint": code_segs[0] or None,
+        "strike_date": _normalize_strike_date(code_segs[1] if len(code_segs) > 1 else None),
+        "strike_price": strike_price,
+        "type": option_type,
+    }
+
+
+def _position_code_candidates(position, fields=None):
+    candidates = []
+    for field in fields or (
+        "stock_owner",
+        "stock_code",
+        "owner_stock_code",
+        "underlying_code",
+        "code",
+    ):
+        raw_value = position.get(field)
+        raw_text = str(raw_value or "").strip()
+        if raw_text:
+            candidates.append(raw_text)
+    return list(dict.fromkeys(candidates))
+
+
+def _resolve_position_targets(position, code_targets, fields=None):
+    resolved = []
+    for raw_code in _position_code_candidates(position, fields=fields):
+        resolved.extend(_resolve_stock_targets(raw_code, code_targets))
+    return list(dict.fromkeys(resolved))
+
+
+def _add_stock_alias_group(stock_alias_map, raw_codes):
+    alias_group = set()
+    for raw_code in raw_codes:
+        alias_group.update(_stock_code_aliases(raw_code))
+    if len(alias_group) < 2:
+        return
+    for alias in alias_group:
+        stock_alias_map.setdefault(alias, set()).update(alias_group)
+
+
+def _build_position_stock_alias_map(positions, option_items=None):
+    stock_alias_map = {}
+    if positions is not None and not positions.empty:
+        for _, position in positions.iterrows():
+            raw_codes = _position_code_candidates(
+                position,
+                fields=(
+                    "stock_owner",
+                    "stock_code",
+                    "owner_stock_code",
+                    "underlying_code",
+                ),
+            )
+            parsed = _parse_option_code_fields(position.get("code"))
+            if parsed and parsed.get("stock_code_hint"):
+                raw_codes.append(parsed["stock_code_hint"])
+            elif position.get("code"):
+                raw_codes.append(position.get("code"))
+            _add_stock_alias_group(stock_alias_map, raw_codes)
+    for option_item in option_items or []:
+        _add_stock_alias_group(
+            stock_alias_map,
+            [option_item.get("stock_owner"), option_item.get("stock_code_hint")],
+        )
+    return stock_alias_map
+
+
+def _extract_option_positions_from_positions(positions):
+    option_items = []
     if positions is None or positions.empty:
-        for stock_code in stock_codes:
+        return option_items
+    for _, position in positions.iterrows():
+        code = str(position.get("code") or "").strip().upper()
+        count = _safe_int(position.get("qty"), 0)
+        if not code or count == 0:
+            continue
+        parsed = _parse_option_code_fields(code)
+        if not parsed:
+            continue
+        option_items.append(
+            {
+                "code": code,
+                "type": parsed.get("type"),
+                "side": SIDE_SHORT if count < 0 else SIDE_LONG,
+                "strike_date": parsed.get("strike_date"),
+                "strike_price": parsed.get("strike_price"),
+                "count": count,
+                "pl_ratio": _safe_float(position.get("pl_ratio", 0), 0.0),
+                "pl_val": _safe_float(position.get("pl_val"), None),
+                "market_val": _safe_float(position.get("market_val"), None),
+                "stock_owner": next(
+                    (
+                        normalize_stock_code(raw_code)
+                        for raw_code in _position_code_candidates(
+                            position,
+                            fields=(
+                                "stock_owner",
+                                "stock_code",
+                                "owner_stock_code",
+                                "underlying_code",
+                            ),
+                        )
+                        if normalize_stock_code(raw_code)
+                    ),
+                    None,
+                ),
+                "stock_code_hint": parsed.get("stock_code_hint"),
+            }
+        )
+    return option_items
+
+
+def _build_stock_code_targets(stock_codes):
+    code_targets = {}
+    for stock_code in list(dict.fromkeys(normalize_stock_code(code) for code in stock_codes)):
+        if not stock_code:
+            continue
+        for alias in _stock_code_aliases(stock_code):
+            code_targets.setdefault(alias, []).append(stock_code)
+    return code_targets
+
+
+def _resolve_stock_targets(raw_code, code_targets, stock_alias_map=None):
+    resolved = []
+    expanded_aliases = set(_stock_code_aliases(raw_code))
+    for alias in list(expanded_aliases):
+        if stock_alias_map:
+            expanded_aliases.update(stock_alias_map.get(alias, set()))
+    for alias in expanded_aliases:
+        targets = code_targets.get(alias)
+        if targets:
+            resolved.extend(targets)
+    return list(dict.fromkeys(resolved))
+
+
+def _group_option_positions_by_stock_codes(option_items, stock_codes, stock_alias_map=None):
+    stock_codes = list(dict.fromkeys(normalize_stock_code(code) for code in stock_codes))
+    options_map = {stock_code: [] for stock_code in stock_codes if stock_code}
+    hit_codes_map = {stock_code: set() for stock_code in options_map}
+    code_targets = _build_stock_code_targets(stock_codes)
+
+    if not option_items:
+        for stock_code in options_map:
             _log_profit_hits(stock_code, set())
         return options_map
 
-    for _, position in positions.iterrows():
-        code = position["code"]
-        count = _safe_int(position.get("qty"), 0)
-        if count == 0:  # 忽略空仓
-            continue
-        side = SIDE_SHORT if count < 0 else SIDE_LONG
-        code_segs = re.split(r'(\d+)', code)
-        if len(code_segs) <= 3:  # not option
-            continue
+    for option_item in option_items:
         target_stock_codes = _resolve_stock_targets(
-            code_segs[0],
-            full_code_targets,
-            bare_code_targets,
+            option_item.get("stock_owner"),
+            code_targets,
+            stock_alias_map=stock_alias_map,
         )
         if not target_stock_codes:
+            target_stock_codes = _resolve_stock_targets(
+                option_item.get("stock_code_hint"),
+                code_targets,
+                stock_alias_map=stock_alias_map,
+            )
+        if not target_stock_codes:
             continue
-        if code_segs[2] == 'C':
-            option_type = OptionEnum.CALL
-        elif code_segs[2] == 'P':
-            option_type = OptionEnum.PUT
-        else:
-            logger.error(f"Unknown option type in code {code}, skip.")
+        if (
+            option_item.get("type") is None
+            or option_item.get("strike_date") is None
+            or option_item.get("strike_price") is None
+        ):
+            logger.debug("skip option with incomplete metadata: %s", option_item.get("code"))
             continue
-        pl_ratio = _safe_float(position.get("pl_ratio", 0), 0.0)
-        pl_val = _safe_float(position.get("pl_val"), None)
-        market_val = _safe_float(position.get("market_val"), None)
-        option_item = {
-            "code": code,
-            "type": option_type,
-            "side": side,
-            "strike_date": code_segs[1],
-            "strike_price": float(code_segs[3]) / 1000,
-            "count": count,
-            "pl_ratio": pl_ratio,
-            "pl_val": pl_val,
-            "market_val": market_val,
-        }
+        pl_ratio = _safe_float(option_item.get("pl_ratio", 0), 0.0)
         for stock_code in target_stock_codes:
             if pl_ratio >= PROFIT_HIGHLIGHT_THRESHOLD:
-                hit_codes_map[stock_code].add(code)
+                hit_codes_map[stock_code].add(option_item["code"])
             options_map[stock_code].append(dict(option_item))
-    for stock_code in stock_codes:
+
+    for stock_code in options_map:
         _log_profit_hits(stock_code, hit_codes_map[stock_code])
     return options_map
 
 
-def get_stock_share_delta_map(positions, stock_codes):
+def _get_options_map_from_positions(positions, stock_codes):
+    # 单次遍历持仓快照，按标的聚合期权，避免“每个标的都全表扫描”
+    option_items = _extract_option_positions_from_positions(positions)
+    return _group_option_positions_by_stock_codes(
+        option_items,
+        stock_codes,
+        stock_alias_map=_build_position_stock_alias_map(positions, option_items),
+    )
+
+
+def get_stock_share_delta_map(positions, stock_codes, quote_ctx=None, quote_lock=None):
     # 统计正股仓位 delta（1 股正股按 delta=1）
-    stock_codes = list(dict.fromkeys(stock_codes))
+    stock_codes = list(dict.fromkeys(normalize_stock_code(code) for code in stock_codes))
     stock_delta_map = {stock_code: 0.0 for stock_code in stock_codes}
     if positions is None or positions.empty:
         return stock_delta_map
-    full_code_targets, bare_code_targets = _build_stock_code_targets(stock_codes)
+    code_targets = _build_stock_code_targets(stock_codes)
+    option_items = _extract_option_positions_from_positions(positions)
+    if quote_ctx is not None and option_items:
+        option_quotes = _get_option_quotes_batch(
+            quote_ctx,
+            [option["code"] for option in option_items],
+            quote_lock=quote_lock,
+        )
+        _merge_option_quotes(option_items, option_quotes)
+    stock_alias_map = _build_position_stock_alias_map(positions, option_items)
     for _, position in positions.iterrows():
         code = position.get("code")
         code_segs = re.split(r'(\d+)', str(code))
@@ -727,11 +962,27 @@ def get_stock_share_delta_map(positions, stock_codes):
         count = _safe_float(position.get("qty"), 0.0)
         if count == 0:
             continue
-        target_stock_codes = _resolve_stock_targets(
-            code,
-            full_code_targets,
-            bare_code_targets,
+        target_stock_codes = _resolve_position_targets(
+            position,
+            code_targets,
+            fields=(
+                "stock_owner",
+                "stock_code",
+                "owner_stock_code",
+                "underlying_code",
+                "code",
+            ),
         )
+        if not target_stock_codes:
+            for raw_code in _position_code_candidates(position):
+                target_stock_codes.extend(
+                    _resolve_stock_targets(
+                        raw_code,
+                        code_targets,
+                        stock_alias_map=stock_alias_map,
+                    )
+                )
+            target_stock_codes = list(dict.fromkeys(target_stock_codes))
         for stock_code in target_stock_codes:
             stock_delta_map[stock_code] += count
     return stock_delta_map
@@ -839,13 +1090,40 @@ def get_options(trade_ctx, stock_code, trade_lock=None, positions=None):
     return _get_options_from_positions(positions, stock_code)
 
 
-def get_options_map(trade_ctx, stock_codes, trade_lock=None, positions=None):
+def get_options_map(
+    trade_ctx,
+    stock_codes,
+    trade_lock=None,
+    positions=None,
+    quote_ctx=None,
+    quote_lock=None,
+):
     # 支持一次性返回多个标的的期权列表，避免重复扫描持仓快照
     if positions is None:
         positions = _query_positions_with_log(
             trade_ctx, trade_lock, purpose=f"get_options_map:{','.join(stock_codes)}"
         )
-    return _get_options_map_from_positions(positions, stock_codes)
+    stock_codes = parse_stock_codes_arg(stock_codes)
+    option_items = _extract_option_positions_from_positions(positions)
+    stock_alias_map = _build_position_stock_alias_map(positions, option_items)
+    if quote_ctx is None or not option_items:
+        return _group_option_positions_by_stock_codes(
+            option_items,
+            stock_codes,
+            stock_alias_map=stock_alias_map,
+        )
+    option_quotes = _get_option_quotes_batch(
+        quote_ctx,
+        [option["code"] for option in option_items],
+        quote_lock=quote_lock,
+    )
+    _merge_option_quotes(option_items, option_quotes)
+    stock_alias_map = _build_position_stock_alias_map(positions, option_items)
+    return _group_option_positions_by_stock_codes(
+        option_items,
+        stock_codes,
+        stock_alias_map=stock_alias_map,
+    )
 
 
 def _get_stock_prices_from_options_batch(quote_ctx, option_code_snapshot, quote_lock=None):
@@ -1021,6 +1299,13 @@ def _get_option_quotes_batch(quote_ctx, option_codes, quote_lock=None):
                 ),
                 "delta": _safe_float(data.get("option_delta"), None),
                 "contract_size": _safe_int(data.get("option_contract_size"), 100),
+                "stock_owner": data.get("stock_owner"),
+                "strike_date": data.get("strike_time", data.get("option_strike_time")),
+                "strike_price": _safe_float(
+                    data.get("option_strike_price", data.get("strike_price")),
+                    None,
+                ),
+                "type": data.get("option_type"),
             }
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.debug(
@@ -1040,6 +1325,18 @@ def _merge_option_quotes(options, quotes):
         option["open_interest"] = quote.get("open_interest")
         option["delta"] = quote.get("delta")
         option["contract_size"] = quote.get("contract_size")
+        stock_owner = normalize_stock_code(quote.get("stock_owner"))
+        if stock_owner:
+            option["stock_owner"] = stock_owner
+        strike_date = _normalize_strike_date(quote.get("strike_date"))
+        if strike_date:
+            option["strike_date"] = strike_date
+        strike_price = _safe_float(quote.get("strike_price"), None)
+        if strike_price is not None:
+            option["strike_price"] = strike_price
+        option_type = _coerce_option_enum(quote.get("type"))
+        if option_type is not None:
+            option["type"] = option_type
 
 
 def _options_signature(options):

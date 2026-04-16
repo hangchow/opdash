@@ -35,7 +35,7 @@ python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval
 
 ## Arguments
 
-- `stock_codes` (required): comma-separated stock codes, e.g. `US.AAPL,US.TSLA`
+- `stock_codes` (required): comma-separated stock codes, e.g. `US.AAPL,US.TSLA` or `HK.00700`
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one or two Futu ports, default `11111`
 - `--poll_interval`: option polling interval seconds, default `10`

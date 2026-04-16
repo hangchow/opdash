@@ -61,6 +61,7 @@ python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC
 - `stock_codes`: Comma-separated stock codes, for example:
   - `US.AAPL`
   - `US.AAPL,US.TSLA`
+  - `HK.00700`
   - `"US.AAPL, US.TSLA"` (spaces are allowed)
 
 ### Optional arguments
