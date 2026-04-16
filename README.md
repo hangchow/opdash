@@ -10,8 +10,7 @@ Options position dashboard and plotting tool.
 - `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
 - `options.py`, `positions.py`, `stocks.py`: required local modules
 - `docs/screenshots/`: README screenshots for GUI/Web examples
-- [`docs/plot_positions_option.md`](docs/plot_positions_option.md): Matplotlib GUI usage guide
-- [`docs/plot_positions_option_web.md`](docs/plot_positions_option_web.md): web dashboard usage guide
+- [`docs/usage.md`](docs/usage.md): detailed usage guide for both GUI and Web entries
 
 ## Data Source Support
 
@@ -30,27 +29,24 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Matplotlib GUI example (`US.UVIX`, compare ports `11111` and `22222`):
+All commands below assume the virtual environment is already activated and OpenD is already running.
+
+GUI example:
 
 ```bash
 python opdash.py US.UVIX --port 11111,22222
 ```
 
-Hong Kong stock example (`HK.00700`, compare ports `11111` and `22222`):
+Hong Kong stock examples:
 
 ```bash
 python opdash.py HK.00700 --port 11111,22222 --profit_highlight_threshold 70
-```
-
-Hong Kong alias example (`HK.TCH` also supported):
-
-```bash
 python opdash.py HK.TCH --port 11111,22222 --profit_highlight_threshold 70
 ```
 
 ![Matplotlib GUI screenshot](docs/screenshots/plot_positions_option_uvix_11111_22222.png)
 
-Web dashboard example (`US.UVIX`, compare ports `11111` and `22222`):
+Web example:
 
 ```bash
 python opdash_web.py US.UVIX --port 11111,22222
@@ -60,7 +56,7 @@ Then open `http://127.0.0.1:18080` in your browser.
 
 ![Web dashboard screenshot](docs/screenshots/plot_positions_option_web_uvix_11111_22222.png)
 
-Enable Telegram short-close alerts (default threshold follows `--profit_highlight_threshold`, default `80`):
+Telegram alert example:
 
 ```bash
 python opdash_web.py US.AAPL \
@@ -68,9 +64,6 @@ python opdash_web.py US.AAPL \
   --telegram_chat_id <CHAT_ID>
 ```
 
-## Notes
+## Detailed Usage
 
-- GUI and Web now share `backend.py` + `core.py` for backend logic.
-- Existing GUI behavior and the thread model stay the same (one options thread per port + one shared price thread).
-- Telegram short-close alerts trigger only for `SHORT` options whose `pl_ratio` crosses the configured threshold (newly-hit only, de-duplicated).
-- Best-fit scenario: Most of your option positions are short positions.
+For full CLI arguments, more examples, runtime behavior, and troubleshooting, see [docs/usage.md](docs/usage.md).
