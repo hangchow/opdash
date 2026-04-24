@@ -31,7 +31,6 @@ All commands below assume the virtual environment is already activated.
 - If you compare two ports such as `11111,11112`, run two OpenD instances and assign different listening ports.
 - Supported stock-code inputs include `US.AAPL`, `HK.00700`, and `HK.TCH`.
 - GUI and Web share the same backend logic in `backend.py` and `core.py`.
-- Telegram short-close alerts trigger only when a short option newly crosses `--profit_highlight_threshold`.
 
 Official OpenD startup docs:
 
@@ -58,7 +57,7 @@ If you pass two ports, charts are shown side by side.
 ### Syntax
 
 ```bash
-python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID]
+python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT]
 ```
 
 ### Arguments
@@ -71,8 +70,6 @@ python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC
 - `--ui_interval`: UI refresh interval seconds, default `5`
 - `--price_mode`: `auto|last|pre|after|overnight|implied`, default `implied`
 - `--profit_highlight_threshold`: filled-marker threshold percent, default `80`
-- `--telegram_bot_token`: Telegram bot token, default env `TELEGRAM_BOT_TOKEN`
-- `--telegram_chat_id`: Telegram chat id, default env `TELEGRAM_CHAT_ID`
 
 ### Examples
 
@@ -98,14 +95,6 @@ Hong Kong stock by alias:
 
 ```bash
 python opdash.py HK.TCH --port 11111,22222 --profit_highlight_threshold 70
-```
-
-Telegram alerts:
-
-```bash
-python opdash.py US.AAPL \
-  --telegram_bot_token <BOT_TOKEN> \
-  --telegram_chat_id <CHAT_ID>
 ```
 
 Built-in help:
@@ -135,7 +124,7 @@ python opdash.py -h
 ### Syntax
 
 ```bash
-python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--telegram_bot_token TOKEN] [--telegram_chat_id CHAT_ID] [--web_host HOST] [--web_port PORT]
+python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--web_host HOST] [--web_port PORT]
 ```
 
 ### Arguments
@@ -148,8 +137,6 @@ python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval
 - `--ui_interval`: browser refresh interval seconds, default `5`
 - `--price_mode`: `auto|last|pre|after|overnight|implied`, default `implied`
 - `--profit_highlight_threshold`: filled marker threshold percent, default `80`
-- `--telegram_bot_token`: Telegram bot token, default env `TELEGRAM_BOT_TOKEN`
-- `--telegram_chat_id`: Telegram chat id, default env `TELEGRAM_CHAT_ID`
 - `--web_host`: web server host, default `127.0.0.1`
 - `--web_port`: web server port, default `18080`
 
@@ -177,14 +164,6 @@ Hong Kong stock:
 
 ```bash
 python opdash_web.py HK.00700 --port 11111,22222 --profit_highlight_threshold 70
-```
-
-Telegram alerts:
-
-```bash
-python opdash_web.py US.AAPL \
-  --telegram_bot_token <BOT_TOKEN> \
-  --telegram_chat_id <CHAT_ID>
 ```
 
 Then open:

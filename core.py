@@ -1,11 +1,7 @@
 import logging
-import json
-import os
 import re
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from contextlib import contextmanager
 
@@ -20,7 +16,6 @@ logger = logging.getLogger("opdash.core")
 
 DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD = 80.0
 PROFIT_HIGHLIGHT_THRESHOLD = DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD  # Highlight threshold
-DEFAULT_TELEGRAM_TIMEOUT_SECONDS = 8.0
 SHORT_POSITION_COLOR = (0.0, 0.6, 0.0, 1.0)    # Green: short
 LONG_POSITION_COLOR = (1.0, 0.41, 0.71, 1.0)   # Pink: long
 HOLLOW_FACE_COLOR = (0.0, 0.0, 0.0, 0.0)       # Hollow marker fill
@@ -103,20 +98,6 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
             f"default: {DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD:g}"
         ),
     )
-    parser.add_argument(
-        "--telegram_bot_token",
-        metavar="",
-        default=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-        help="telegram bot token (default: env TELEGRAM_BOT_TOKEN)",
-    )
-    parser.add_argument(
-        "--telegram_chat_id",
-        metavar="",
-        default=os.getenv("TELEGRAM_CHAT_ID", ""),
-        help="telegram chat id (default: env TELEGRAM_CHAT_ID)",
-    )
-
-
 def set_profit_highlight_threshold(value):
     global PROFIT_HIGHLIGHT_THRESHOLD
     threshold = float(value)
@@ -198,7 +179,6 @@ def build_server_settings(
     ui_interval,
     price_mode,
     profit_highlight_threshold,
-    telegram_alert_enabled=False,
     web_host=None,
     web_port=None,
     started_at=None,
@@ -213,7 +193,6 @@ def build_server_settings(
         "ui_interval": ui_interval,
         "price_mode": price_mode,
         "profit_highlight_threshold": profit_highlight_threshold,
-        "telegram_alert_enabled": bool(telegram_alert_enabled),
         "web_host": web_host,
         "web_port": web_port,
     }
@@ -248,8 +227,6 @@ def format_server_settings_text(server_settings, prefix="server settings"):
         ),
         f"price_mode={s.get('price_mode') or '-'}",
         f"profit_highlight_threshold={threshold_text}",
-        f"short_close_alert_threshold={threshold_text}",
-        f"telegram_alert={'on' if s.get('telegram_alert_enabled') else 'off'}",
     ]
     if s.get("web_host") is not None or s.get("web_port") is not None:
         parts.append(f"web={s.get('web_host') or '-'}:{s.get('web_port') or '-'}")
@@ -431,115 +408,6 @@ def _fmt_percent(value):
     if num is None:
         return "N/A"
     return f"{num:.2f}"
-
-
-def _as_non_empty_text(value):
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
-def _send_telegram_message(
-    bot_token,
-    chat_id,
-    text,
-    *,
-    timeout_seconds=DEFAULT_TELEGRAM_TIMEOUT_SECONDS,
-    logger_obj=None,
-):
-    logger_obj = logger_obj or logger
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = json.dumps(
-        {
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": True,
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            status = getattr(response, "status", response.getcode())
-            body = response.read().decode("utf-8", errors="ignore")
-        if status != 200:
-            logger_obj.error(
-                "telegram sendMessage failed: status=%s body=%s",
-                status,
-                body[:240],
-            )
-            return False
-        try:
-            payload_data = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            payload_data = {}
-        if payload_data.get("ok") is False:
-            logger_obj.error(
-                "telegram sendMessage rejected: %s",
-                payload_data.get("description") or body[:240],
-            )
-            return False
-        return True
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8", errors="ignore")
-        except Exception:
-            body = str(e)
-        logger_obj.error(
-            "telegram sendMessage HTTP error: code=%s body=%s",
-            getattr(e, "code", "?"),
-            body[:240],
-        )
-    except Exception as e:
-        logger_obj.error("telegram sendMessage error: %s", e)
-    return False
-
-
-def make_telegram_short_close_alert_handler(bot_token, chat_id, logger_obj=None):
-    token = _as_non_empty_text(bot_token)
-    chat = _as_non_empty_text(chat_id)
-    if not token or not chat:
-        return None
-    logger_obj = logger_obj or logger
-
-    def _handler(
-        *,
-        port,
-        stock_code,
-        option_code,
-        count,
-        pl_ratio,
-        threshold,
-    ):
-        message = (
-            "Short option close alert\n"
-            f"stock={stock_code} port={port}\n"
-            f"option={option_code}\n"
-            f"count={abs(_safe_int(count, 0))} "
-            f"profit={_safe_float(pl_ratio, 0.0):.2f}% "
-            f"(threshold={_safe_float(threshold, 0.0):.2f}%)"
-        )
-        sent = _send_telegram_message(
-            token,
-            chat,
-            message,
-            logger_obj=logger_obj,
-        )
-        if sent:
-            logger_obj.info(
-                "telegram short close alert sent: stock=%s port=%s option=%s",
-                stock_code,
-                port,
-                option_code,
-            )
-        return sent
-
-    return _handler
 
 
 def _option_side(option):

@@ -36,8 +36,6 @@ class OptionDashboardBackend:
         poll_purpose_prefix="poll_options",
         price_thread_name="poll_price",
         options_thread_name_prefix="poll_options_",
-        short_alert_threshold=None,
-        short_alert_handler=None,
     ):
         self.stock_codes = list(stock_codes)
         self.host = host
@@ -68,16 +66,11 @@ class OptionDashboardBackend:
         self.poll_purpose_prefix = poll_purpose_prefix
         self.price_thread_name = price_thread_name
         self.options_thread_name_prefix = options_thread_name_prefix
-        self.short_alert_threshold = (
-            None if short_alert_threshold is None else float(short_alert_threshold)
-        )
-        self.short_alert_handler = short_alert_handler
 
         self.stop_event = Event()
         self.price_lock = Lock()
         self.options_lock = Lock()
         self.version_lock = Lock()
-        self.alert_lock = Lock()
 
         self.trade_ctxs = {}
         self.quote_ctxs = {}
@@ -95,7 +88,6 @@ class OptionDashboardBackend:
         self.latest_delta_sum_by_panel = {}
         self.latest_stock_shares_by_panel = {}
         self.options_done_at_by_port = {}
-        self.short_alert_hits_by_port = {port: set() for port in self.ports}
         self.price_done_at = None
         self.options_version = 0
         self.price_version = 0
@@ -110,76 +102,9 @@ class OptionDashboardBackend:
             return None
         return number
 
-    @staticmethod
-    def _is_short_option(option):
-        side = str(option.get("side") or "").upper()
-        if side == "SHORT":
-            return True
-        if side == "LONG":
-            return False
-        count = option.get("count")
-        try:
-            return float(count) < 0
-        except (TypeError, ValueError):
-            return False
-
-    def _collect_new_short_close_alerts(self, port, options_snapshot):
-        if self.short_alert_threshold is None:
-            return []
-        if not callable(self.short_alert_handler):
-            return []
-        threshold = self.short_alert_threshold
-        current_hits = {}
-        for stock_code, options in options_snapshot.items():
-            for option in options:
-                if not self._is_short_option(option):
-                    continue
-                option_code = option.get("code")
-                if not option_code:
-                    continue
-                pl_ratio = self._safe_float(option.get("pl_ratio"))
-                if pl_ratio is None or pl_ratio < threshold:
-                    continue
-                current_hits[(stock_code, option_code)] = {
-                    "stock_code": stock_code,
-                    "option": option,
-                    "pl_ratio": pl_ratio,
-                }
-        with self.alert_lock:
-            previous_hits = self.short_alert_hits_by_port.get(port, set())
-            current_keys = set(current_hits.keys())
-            new_keys = current_keys - previous_hits
-            self.short_alert_hits_by_port[port] = current_keys
-        return [current_hits[key] for key in sorted(new_keys)]
-
-    def _emit_short_close_alerts(self, port, alerts):
-        if not alerts or not callable(self.short_alert_handler):
-            return
-        for alert in alerts:
-            option = alert["option"]
-            try:
-                self.short_alert_handler(
-                    port=port,
-                    stock_code=alert["stock_code"],
-                    option_code=option.get("code"),
-                    count=option.get("count"),
-                    pl_ratio=alert["pl_ratio"],
-                    threshold=self.short_alert_threshold,
-                )
-            except Exception as e:
-                self.logger.error(
-                    "short close alert handler failed: port=%s stock=%s option=%s err=%s",
-                    port,
-                    alert["stock_code"],
-                    option.get("code"),
-                    e,
-                )
-
     def start(self):
         self.stop_event.clear()
         self.exit_stack = ExitStack()
-        with self.alert_lock:
-            self.short_alert_hits_by_port = {port: set() for port in self.ports}
         try:
             for port in self.ports:
                 self.trade_ctxs[port] = self.exit_stack.enter_context(
@@ -221,10 +146,6 @@ class OptionDashboardBackend:
                     quote_ctx=quote_ctx,
                     quote_lock=quote_lock,
                 )
-                startup_short_alerts = self._collect_new_short_close_alerts(
-                    port, options_snapshot
-                )
-                self._emit_short_close_alerts(port, startup_short_alerts)
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
                     self.stock_codes,
@@ -405,10 +326,6 @@ class OptionDashboardBackend:
                     quote_ctx=quote_ctx,
                     quote_lock=quote_lock,
                 )
-                new_short_alerts = self._collect_new_short_close_alerts(
-                    port, options_snapshot
-                )
-                self._emit_short_close_alerts(port, new_short_alerts)
                 option_code_snapshot = {
                     stock_code: (options[0]["code"] if options else None)
                     for stock_code, options in options_snapshot.items()

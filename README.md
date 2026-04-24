@@ -56,14 +56,6 @@ Then open `http://127.0.0.1:18080` in your browser.
 
 ![Web dashboard screenshot](docs/screenshots/plot_positions_option_web_uvix_11111_22222.png)
 
-Telegram alert example:
-
-```bash
-python opdash_web.py US.AAPL \
-  --telegram_bot_token <BOT_TOKEN> \
-  --telegram_chat_id <CHAT_ID>
-```
-
 ## Detailed Usage
 
 For full CLI arguments, more examples, runtime behavior, and troubleshooting, see [docs/usage.md](docs/usage.md).
