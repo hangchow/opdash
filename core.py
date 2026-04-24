@@ -98,6 +98,8 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
             f"default: {DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD:g}"
         ),
     )
+
+
 def set_profit_highlight_threshold(value):
     global PROFIT_HIGHLIGHT_THRESHOLD
     threshold = float(value)
