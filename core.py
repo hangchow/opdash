@@ -1366,6 +1366,7 @@ def _options_hover_signature(options):
         price = _safe_float(option.get("price"), None)
         bid_price = _safe_float(option.get("bid_price"), None)
         ask_price = _safe_float(option.get("ask_price"), None)
+        delta = _safe_float(option.get("delta"), None)
         volume = _safe_int(option.get("volume"), None)
         open_interest = _safe_int(option.get("open_interest"), None)
         profit_ratio = _safe_float(option.get("pl_ratio"), None)
@@ -1377,6 +1378,7 @@ def _options_hover_signature(options):
                 None if price is None else round(price, 4),
                 None if bid_price is None else round(bid_price, 4),
                 None if ask_price is None else round(ask_price, 4),
+                None if delta is None else round(delta, 4),
                 volume,
                 open_interest,
                 None if profit_ratio is None else round(profit_ratio, 4),
