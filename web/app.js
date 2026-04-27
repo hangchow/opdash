@@ -13,6 +13,7 @@ const LEGEND_HOLLOW_COLOR = "#ffffff";
 const Y_RANGE_PAD_RATIO = 0.1;
 const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
 const Y_RANGE_MIN_PAD = 1.0;
+const HOVER_LABEL_SIDE_MARGIN = 10;
 const panelYRangeState = new Map();
 
 function formatQuantity(value) {
@@ -29,6 +30,101 @@ function formatQuantity(value) {
 
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function parseTranslate(transformText) {
+  const match = /translate\(([-\d.]+)(?:[,\s]+([-\d.]+))?\)/.exec(transformText || "");
+  if (!match) {
+    return null;
+  }
+  return {
+    raw: match[0],
+    x: Number(match[1]),
+    y: Number(match[2] || 0),
+  };
+}
+
+function clampHoverLabels(chartEl) {
+  if (!chartEl) {
+    return;
+  }
+  const chartRect = chartEl.getBoundingClientRect();
+  if (!chartRect.width) {
+    return;
+  }
+
+  chartEl.querySelectorAll(".hoverlayer .hovertext").forEach((label) => {
+    const labelRect = label.getBoundingClientRect();
+    if (!labelRect.width) {
+      return;
+    }
+
+    const translate = parseTranslate(label.getAttribute("transform"));
+    if (!translate) {
+      return;
+    }
+
+    const minLeft = chartRect.left + HOVER_LABEL_SIDE_MARGIN;
+    const maxLeft = Math.max(
+      minLeft,
+      chartRect.right - HOVER_LABEL_SIDE_MARGIN - labelRect.width
+    );
+    const nextLeft = clamp(labelRect.left, minLeft, maxLeft);
+    const deltaX = nextLeft - labelRect.left;
+
+    if (Math.abs(deltaX) < 0.5) {
+      return;
+    }
+
+    label.setAttribute(
+      "transform",
+      (label.getAttribute("transform") || "").replace(
+        translate.raw,
+        `translate(${(translate.x + deltaX).toFixed(2)}, ${translate.y.toFixed(2)})`
+      )
+    );
+  });
+}
+
+function scheduleHoverLabelClamp(chartEl) {
+  if (!chartEl || chartEl.dataset.hoverClampPending === "true") {
+    return;
+  }
+  chartEl.dataset.hoverClampPending = "true";
+  requestAnimationFrame(() => {
+    chartEl.dataset.hoverClampPending = "false";
+    clampHoverLabels(chartEl);
+  });
+}
+
+function bindHoverLabelClamp(chartEl) {
+  if (!chartEl || chartEl.dataset.hoverClampBound === "true") {
+    return;
+  }
+  chartEl.dataset.hoverClampBound = "true";
+
+  const schedule = () => scheduleHoverLabelClamp(chartEl);
+  if (typeof chartEl.on === "function") {
+    chartEl.on("plotly_hover", schedule);
+    chartEl.on("plotly_afterplot", schedule);
+    chartEl.on("plotly_relayout", schedule);
+    chartEl.on("plotly_redraw", schedule);
+  }
+
+  chartEl.addEventListener(
+    "mousemove",
+    () => {
+      if (chartEl.querySelector(".hoverlayer .hovertext")) {
+        schedule();
+      }
+    },
+    { passive: true }
+  );
+  window.addEventListener("resize", schedule, { passive: true });
 }
 
 function maximizeButtonIcon() {
@@ -516,7 +612,11 @@ function renderPanel(id, panel) {
   };
 
   const config = { responsive: true, displaylogo: false };
-  Plotly.react(id, traces, layout, config);
+  const chartEl = document.getElementById(id);
+  Plotly.react(id, traces, layout, config).then(() => {
+    bindHoverLabelClamp(chartEl);
+    scheduleHoverLabelClamp(chartEl);
+  });
 }
 
 function ensureRefreshTimer(snapshot) {
