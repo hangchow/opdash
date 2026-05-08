@@ -1,6 +1,5 @@
 futu-api
 matplotlib
-mplcursors
 numpy
 pytz
 fastapi

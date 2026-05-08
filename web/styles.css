@@ -146,8 +146,29 @@ body {
 }
 
 .chart {
+  position: relative;
   width: 100%;
   height: 520px;
+}
+
+.option-hover-tooltip {
+  position: absolute;
+  z-index: 8;
+  max-width: min(420px, calc(100% - 20px));
+  padding: 8px 10px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.97);
+  color: #0f172a;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: auto;
+  white-space: normal;
+}
+
+.option-hover-tooltip[hidden] {
+  display: none;
 }
 
 .chart-backdrop {

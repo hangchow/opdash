@@ -6,7 +6,6 @@ import textwrap
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
-import mplcursors
 import numpy as np
 from matplotlib import transforms
 from matplotlib.legend_handler import HandlerTuple
@@ -64,6 +63,13 @@ Y_RANGE_PAD_RATIO = 0.1
 Y_RANGE_EDGE_TRIGGER_RATIO = 0.1
 Y_RANGE_MIN_PAD = 1.0
 BASE_PRICE_LABEL_YSHIFT_PTS = 10
+HOVER_FIGURE_MARGIN_PX = 10
+HOVER_POSITION_CANDIDATES = (
+    ((15, 15), "left", "bottom"),
+    ((-15, 15), "right", "bottom"),
+    ((15, -15), "left", "top"),
+    ((-15, -15), "right", "top"),
+)
 
 
 def parse_args():
@@ -372,6 +378,193 @@ def _draw_position_count_text(ax, options, stock_share_count=None):
     )
 
 
+def _format_option_hover_text(strike_dt, strike_price, details):
+    if not details:
+        return f"{strike_dt}, {strike_price:.2f}"
+    lines = [f"{strike_dt}, {strike_price:.2f}"]
+    for detail in sorted(
+        details,
+        key=lambda d: (
+            0 if d.get("side") == SIDE_SHORT else 1,
+            0 if d.get("type") == OptionEnum.CALL else 1,
+        ),
+    ):
+        side_text = "SHORT" if detail.get("side") == SIDE_SHORT else "LONG"
+        type_text = "CALL" if detail.get("type") == OptionEnum.CALL else "PUT"
+        profit_value = _safe_float(detail.get("profit_value"), None)
+        profit_value_text = "N/A" if profit_value is None else f"{profit_value:+.2f}"
+        delta = _safe_float(detail.get("delta"), None)
+        delta_text = "N/A" if delta is None else f"{delta:+.3f}"
+        lines.extend(
+            [
+                f"{side_text} {type_text}: count={detail['count']}, price={_fmt_price(detail.get('price'))}",
+                (
+                    f"  bid={_fmt_price(detail.get('bid_price'))}, "
+                    f"ask={_fmt_price(detail.get('ask_price'))}, "
+                    f"vol={_fmt_int(detail.get('volume'))}, "
+                    f"oi={_fmt_int(detail.get('open_interest'))}"
+                ),
+                (
+                    f"  delta={delta_text}, "
+                    f"profit%={_fmt_percent(detail.get('profit_ratio'))}, "
+                    f"p/l={profit_value_text}"
+                ),
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _create_hover_annotation(ax):
+    annotation = ax.annotate(
+        "",
+        xy=(0, 0),
+        xytext=(15, 15),
+        textcoords="offset points",
+        ha="left",
+        va="bottom",
+        visible=False,
+        annotation_clip=False,
+        zorder=np.inf,
+        bbox=dict(facecolor="white", edgecolor="#94a3b8", alpha=0.9, pad=0.45),
+        arrowprops=dict(arrowstyle="->", color="#64748b", linewidth=0.8),
+    )
+    annotation.remove()
+    annotation.axes = ax
+    ax.figure.add_artist(annotation)
+    return annotation
+
+
+def _hover_collection_hit(collection, event, ax):
+    if collection is None or not collection.get_visible():
+        return None
+    offsets = collection.get_offsets()
+    if len(offsets) == 0:
+        return None
+    xy_pixels = ax.transData.transform(offsets)
+    deltas = xy_pixels - np.array([event.x, event.y])
+    distances = np.hypot(deltas[:, 0], deltas[:, 1])
+    if len(distances) == 0:
+        return None
+    index = int(np.argmin(distances))
+    sizes = collection.get_sizes()
+    marker_size = float(sizes[index]) if len(sizes) > index else 0.0
+    marker_radius = (marker_size ** 0.5) * ax.figure.dpi / 72.0 / 2.0
+    hit_radius = max(8.0, marker_radius + 4.0)
+    if distances[index] > hit_radius:
+        return None
+    return offsets[index]
+
+
+def _hover_overflow_px(bbox, figure_bbox, margin_px=HOVER_FIGURE_MARGIN_PX):
+    left = max(0, figure_bbox.x0 + margin_px - bbox.x0)
+    right = max(0, bbox.x1 - (figure_bbox.x1 - margin_px))
+    bottom = max(0, figure_bbox.y0 + margin_px - bbox.y0)
+    top = max(0, bbox.y1 - (figure_bbox.y1 - margin_px))
+    return left + right + bottom + top
+
+
+def _clamp_hover_annotation_to_figure(fig, annotation):
+    renderer = fig.canvas.get_renderer()
+    figure_bbox = fig.bbox
+    best = None
+
+    for xytext, ha, va in HOVER_POSITION_CANDIDATES:
+        annotation.set_position(xytext)
+        annotation.set_ha(ha)
+        annotation.set_va(va)
+        annotation.update_positions(renderer)
+        bbox = annotation.get_window_extent(renderer)
+        overflow = _hover_overflow_px(bbox, figure_bbox)
+        if best is None or overflow < best[0]:
+            best = (overflow, xytext, ha, va, bbox)
+        if overflow == 0:
+            break
+
+    if best is None:
+        return
+
+    _, xytext, ha, va, bbox = best
+    annotation.set_position(xytext)
+    annotation.set_ha(ha)
+    annotation.set_va(va)
+    annotation.update_positions(renderer)
+    bbox = annotation.get_window_extent(renderer)
+
+    dx = 0
+    dy = 0
+    min_x = figure_bbox.x0 + HOVER_FIGURE_MARGIN_PX
+    max_x = figure_bbox.x1 - HOVER_FIGURE_MARGIN_PX
+    min_y = figure_bbox.y0 + HOVER_FIGURE_MARGIN_PX
+    max_y = figure_bbox.y1 - HOVER_FIGURE_MARGIN_PX
+    if bbox.x0 < min_x:
+        dx = min_x - bbox.x0
+    elif bbox.x1 > max_x:
+        dx = max_x - bbox.x1
+    if bbox.y0 < min_y:
+        dy = min_y - bbox.y0
+    elif bbox.y1 > max_y:
+        dy = max_y - bbox.y1
+    if dx or dy:
+        x_pt, y_pt = annotation.get_position()
+        px_to_pt = 72.0 / fig.dpi
+        annotation.set_position((x_pt + dx * px_to_pt, y_pt + dy * px_to_pt))
+        annotation.update_positions(renderer)
+
+
+def _hide_hover_annotation(fig, state):
+    annotation = state.get("last_annotation")
+    if annotation is not None and annotation.get_visible():
+        annotation.set_visible(False)
+        fig.canvas.draw_idle()
+
+
+def _bind_option_hover(fig, ax, state):
+    def on_motion(event):
+        if event.inaxes != ax:
+            _hide_hover_annotation(fig, state)
+            return
+        target = _hover_collection_hit(state.get("call_sc"), event, ax)
+        if target is None:
+            target = _hover_collection_hit(state.get("put_sc"), event, ax)
+        if target is None:
+            _hide_hover_annotation(fig, state)
+            return
+        x_num = round(float(target[0]), 8)
+        y_val = round(float(target[1]), 6)
+        strike_dt = mdates.num2date(target[0]).strftime("%Y-%m-%d")
+        details = state["point_counts"].get((x_num, y_val), [])
+        annotation = state["last_annotation"]
+        annotation.xy = (target[0], target[1])
+        annotation.set_text(_format_option_hover_text(strike_dt, float(target[1]), details))
+        annotation.set_visible(True)
+        _clamp_hover_annotation_to_figure(fig, annotation)
+        fig.canvas.draw_idle()
+
+    motion_cid = fig.canvas.mpl_connect("motion_notify_event", on_motion)
+    leave_cid = fig.canvas.mpl_connect(
+        "figure_leave_event",
+        lambda event: _hide_hover_annotation(fig, state),
+    )
+    return (motion_cid, leave_cid)
+
+
+def _refresh_visible_hover_annotation(state):
+    annotation = state.get("last_annotation")
+    if annotation is None or not annotation.get_visible():
+        return
+    x_val, y_val = annotation.xy
+    x_num = round(float(x_val), 8)
+    y_num = round(float(y_val), 6)
+    details = state["point_counts"].get((x_num, y_num))
+    if not details:
+        annotation.set_visible(False)
+        return
+    strike_dt = mdates.num2date(x_val).strftime("%Y-%m-%d")
+    annotation.set_text(_format_option_hover_text(strike_dt, float(y_val), details))
+    if annotation.figure is not None:
+        _clamp_hover_annotation_to_figure(annotation.figure, annotation)
+
+
 def _update_position_count_text(text_artist, options, stock_share_count=None):
     if text_artist is None:
         return
@@ -448,8 +641,8 @@ def plot_chart(
         "call_sc": call_sc,
         "put_sc": put_sc,
         "point_counts": point_counts,
-        "last_annotation": None,
-        "cursor": None,
+        "last_annotation": _create_hover_annotation(ax),
+        "hover_cids": (),
         "count_text": _draw_position_count_text(
             ax,
             options,
@@ -457,47 +650,7 @@ def plot_chart(
         ),
         "y_bounds_key": _strike_bounds_key(plot_data["y_all"]),
     }
-
-    cursor = mplcursors.cursor([call_sc, put_sc], hover=True)
-    state["cursor"] = cursor
-    if hasattr(cursor, "enabled"):
-        cursor.enabled = bool(plot_data["y_all"])
-
-    @cursor.connect("add")
-    def on_hover(sel):
-        x_num = round(float(sel.target[0]), 8)
-        y_val = round(float(sel.target[1]), 6)
-        strike_dt = mdates.num2date(sel.target[0]).strftime("%Y-%m-%d")
-        details = point_counts.get((x_num, y_val), [])
-        if details:
-            lines = [f"{strike_dt}, {sel.target[1]:.2f}"]
-            for detail in sorted(
-                details,
-                key=lambda d: (
-                    0 if d.get("side") == SIDE_SHORT else 1,
-                    0 if d.get("type") == OptionEnum.CALL else 1,
-                ),
-            ):
-                side_text = "SHORT" if detail.get("side") == SIDE_SHORT else "LONG"
-                type_text = "CALL" if detail.get("type") == OptionEnum.CALL else "PUT"
-                profit_value = _safe_float(detail.get("profit_value"), None)
-                profit_value_text = "N/A" if profit_value is None else f"{profit_value:+.2f}"
-                delta = _safe_float(detail.get("delta"), None)
-                delta_text = "N/A" if delta is None else f"{delta:+.3f}"
-                lines.append(
-                    f"{side_text} {type_text}: "
-                    f"count={detail['count']}, price={_fmt_price(detail.get('price'))}, "
-                    f"bid_price={_fmt_price(detail.get('bid_price'))}, ask_price={_fmt_price(detail.get('ask_price'))}, "
-                    f"volume={_fmt_int(detail.get('volume'))}, oi={_fmt_int(detail.get('open_interest'))}, "
-                    f"delta={delta_text}, "
-                    f"profit%={_fmt_percent(detail.get('profit_ratio'))}, "
-                    f"p/l={profit_value_text}"
-                )
-            sel.annotation.set_text("\n".join(lines))
-        else:
-            sel.annotation.set_text(f"{strike_dt}, {sel.target[1]:.2f}")
-        sel.annotation.get_bbox_patch().set(fc="white", alpha=0.8)
-        state["last_annotation"] = sel.annotation
+    state["hover_cids"] = _bind_option_hover(ax.figure, ax, state)
 
     base_line, base_text = (None, None)
     if stock_price is not None:
@@ -522,16 +675,13 @@ def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
     has_data = bool(plot_data["y_all"])
     call_sc.set_visible(has_data)
     put_sc.set_visible(has_data)
-    cursor = state.get("cursor")
-    if cursor is not None and hasattr(cursor, "enabled"):
-        cursor.enabled = has_data
     if not has_data:
         last_annotation = state.get("last_annotation")
         if last_annotation is not None:
             last_annotation.set_visible(False)
-            state["last_annotation"] = None
     state["point_counts"].clear()
     state["point_counts"].update(plot_data["point_counts"])
+    _refresh_visible_hover_annotation(state)
     unique_dates = plot_data["unique_dates"]
     ax.set_xticks(unique_dates)
     ax.set_xticklabels(
@@ -897,6 +1047,7 @@ if __name__ == "__main__":
                             key = _panel_key(port_index, stock_code)
                             ax = axs[row_index][port_index]
                             options = latest_options_snapshot.get(key, [])
+                            state = plot_states.get(key)
                             stock_share_count = _safe_float(
                                 latest_stock_shares_snapshot.get(key),
                                 0.0,
@@ -949,7 +1100,6 @@ if __name__ == "__main__":
                                 plot_signature = _options_signature(options)
                             if hover_signature is None:
                                 hover_signature = _options_hover_signature(options)
-                            state = plot_states.get(key)
                             if last_drawn_options.get(key) == plot_signature:
                                 if (
                                     state is not None
@@ -959,6 +1109,8 @@ if __name__ == "__main__":
                                     state["point_counts"].update(
                                         _point_counts_from_options(options)
                                     )
+                                    _refresh_visible_hover_annotation(state)
+                                    need_redraw = True
                                 last_hover_options[key] = hover_signature
                                 continue
 

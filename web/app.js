@@ -14,6 +14,8 @@ const Y_RANGE_PAD_RATIO = 0.1;
 const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
 const Y_RANGE_MIN_PAD = 1.0;
 const HOVER_LABEL_SIDE_MARGIN = 10;
+const OPTION_TOOLTIP_OFFSET = 14;
+const OPTION_TOOLTIP_HIDE_DELAY_MS = 450;
 const panelYRangeState = new Map();
 
 function formatQuantity(value) {
@@ -125,6 +127,147 @@ function bindHoverLabelClamp(chartEl) {
     { passive: true }
   );
   window.addEventListener("resize", schedule, { passive: true });
+}
+
+function clearOptionTooltipHide(tooltip) {
+  const timerId = Number(tooltip.dataset.hideTimer || 0);
+  if (timerId) {
+    window.clearTimeout(timerId);
+    tooltip.dataset.hideTimer = "";
+  }
+}
+
+function hideOptionTooltip(tooltip) {
+  clearOptionTooltipHide(tooltip);
+  tooltip.style.visibility = "hidden";
+  tooltip.hidden = true;
+  tooltip.dataset.visible = "false";
+}
+
+function scheduleOptionTooltipHide(tooltip) {
+  if (!tooltip || tooltip.dataset.visible !== "true") {
+    return;
+  }
+  clearOptionTooltipHide(tooltip);
+  tooltip.dataset.hideTimer = String(
+    window.setTimeout(() => {
+      if (tooltip.matches(":hover")) {
+        return;
+      }
+      hideOptionTooltip(tooltip);
+    }, OPTION_TOOLTIP_HIDE_DELAY_MS)
+  );
+}
+
+function setOptionTooltipContent(tooltip, text) {
+  tooltip.replaceChildren();
+  String(text || "")
+    .split(/<br\s*\/?>/i)
+    .forEach((line, index) => {
+      if (index > 0) {
+        tooltip.appendChild(document.createElement("br"));
+      }
+      tooltip.appendChild(document.createTextNode(line));
+    });
+}
+
+function positionOptionTooltip(chartEl, tooltip, clientX, clientY) {
+  const card = chartEl.closest(".card") || chartEl.parentElement || chartEl;
+  const chartRect = chartEl.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const minLeft = chartRect.left - cardRect.left + HOVER_LABEL_SIDE_MARGIN;
+  const maxLeft = Math.max(
+    minLeft,
+    chartRect.right - cardRect.left - tooltipRect.width - HOVER_LABEL_SIDE_MARGIN
+  );
+  const minTop = chartRect.top - cardRect.top + HOVER_LABEL_SIDE_MARGIN;
+  const maxTop = Math.max(
+    minTop,
+    chartRect.bottom - cardRect.top - tooltipRect.height - HOVER_LABEL_SIDE_MARGIN
+  );
+
+  tooltip.style.left = `${clamp(
+    clientX - cardRect.left + OPTION_TOOLTIP_OFFSET,
+    minLeft,
+    maxLeft
+  )}px`;
+  tooltip.style.top = `${clamp(
+    clientY - cardRect.top + OPTION_TOOLTIP_OFFSET,
+    minTop,
+    maxTop
+  )}px`;
+}
+
+function ensureOptionTooltip(chartEl) {
+  const card = chartEl.closest(".card") || chartEl.parentElement || chartEl;
+  let tooltip = card.querySelector(".option-hover-tooltip");
+  if (tooltip) {
+    return tooltip;
+  }
+
+  tooltip = document.createElement("div");
+  tooltip.className = "option-hover-tooltip";
+  tooltip.hidden = true;
+  tooltip.style.visibility = "hidden";
+  tooltip.dataset.visible = "false";
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.addEventListener("mouseenter", () => clearOptionTooltipHide(tooltip));
+  tooltip.addEventListener("mouseleave", () => scheduleOptionTooltipHide(tooltip));
+  card.appendChild(tooltip);
+  return tooltip;
+}
+
+function showOptionTooltip(chartEl, eventData) {
+  const point = eventData && eventData.points && eventData.points[0];
+  const pointText =
+    point && (point.text || (point.data && point.data.text && point.data.text[point.pointIndex]));
+  if (!pointText) {
+    return;
+  }
+  const sourceEvent = eventData.event || {};
+  const chartRect = chartEl.getBoundingClientRect();
+  const clientX = Number.isFinite(sourceEvent.clientX)
+    ? sourceEvent.clientX
+    : chartRect.left + chartRect.width / 2;
+  const clientY = Number.isFinite(sourceEvent.clientY)
+    ? sourceEvent.clientY
+    : chartRect.top + chartRect.height / 2;
+  const tooltip = ensureOptionTooltip(chartEl);
+  const wasVisible = tooltip.dataset.visible === "true";
+
+  clearOptionTooltipHide(tooltip);
+  setOptionTooltipContent(tooltip, pointText);
+  if (!wasVisible) {
+    tooltip.style.visibility = "hidden";
+  }
+  tooltip.hidden = false;
+  tooltip.dataset.visible = "true";
+  requestAnimationFrame(() => {
+    if (tooltip.dataset.visible === "true") {
+      positionOptionTooltip(chartEl, tooltip, clientX, clientY);
+      tooltip.style.visibility = "visible";
+    }
+  });
+}
+
+function bindOptionTooltip(chartEl) {
+  if (!chartEl || chartEl.dataset.optionTooltipBound === "true") {
+    return;
+  }
+  chartEl.dataset.optionTooltipBound = "true";
+
+  if (typeof chartEl.on === "function") {
+    chartEl.on("plotly_hover", (eventData) => showOptionTooltip(chartEl, eventData));
+    chartEl.on("plotly_unhover", () => scheduleOptionTooltipHide(ensureOptionTooltip(chartEl)));
+    chartEl.on("plotly_relayout", () => hideOptionTooltip(ensureOptionTooltip(chartEl)));
+  }
+
+  chartEl.addEventListener(
+    "mouseleave",
+    () => scheduleOptionTooltipHide(ensureOptionTooltip(chartEl)),
+    { passive: true }
+  );
 }
 
 function maximizeButtonIcon() {
@@ -505,7 +648,7 @@ function renderPanel(id, panel) {
       x: xVals,
       y: yVals,
       text: hoverTexts,
-      hovertemplate: "%{text}<extra></extra>",
+      hoverinfo: "none",
       marker: {
         size: sizes,
         symbol: symbols,
@@ -614,6 +757,7 @@ function renderPanel(id, panel) {
   const config = { responsive: true, displaylogo: false };
   const chartEl = document.getElementById(id);
   Plotly.react(id, traces, layout, config).then(() => {
+    bindOptionTooltip(chartEl);
     bindHoverLabelClamp(chartEl);
     scheduleHoverLabelClamp(chartEl);
   });
