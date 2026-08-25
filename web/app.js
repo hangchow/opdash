@@ -30,6 +30,33 @@ function formatQuantity(value) {
   return num.toFixed(3).replace(/\.?0+$/, "");
 }
 
+function optionCoordinateKey(option) {
+  return JSON.stringify([option.strike_date, Number(option.strike_price)]);
+}
+
+function optionTooltipOrder(option) {
+  const sideOrder = option.side === "SHORT" ? 0 : 1;
+  const typeOrder = option.type === "CALL" ? 0 : 1;
+  return sideOrder * 2 + typeOrder;
+}
+
+function buildGroupedHoverTexts(options) {
+  const groups = new Map();
+  options.forEach((option) => {
+    const key = optionCoordinateKey(option);
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(option);
+  });
+  groups.forEach((group) => {
+    group.sort((left, right) => optionTooltipOrder(left) - optionTooltipOrder(right));
+  });
+  return options.map((option) =>
+    groups.get(optionCoordinateKey(option)).map((item) => item.hover_text)
+  );
+}
+
 function panelId(portIndex, stockCode) {
   return `panel-${portIndex}-${stockCode.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
@@ -159,16 +186,40 @@ function scheduleOptionTooltipHide(tooltip) {
   );
 }
 
-function setOptionTooltipContent(tooltip, text) {
+function splitOptionTooltipLines(text) {
+  return String(text || "").split(/<br\s*\/?>/i);
+}
+
+function appendOptionTooltipLines(container, lines) {
+  lines.forEach((line, index) => {
+    if (index > 0) {
+      container.appendChild(document.createElement("br"));
+    }
+    container.appendChild(document.createTextNode(line));
+  });
+}
+
+function setOptionTooltipContent(tooltip, texts) {
   tooltip.replaceChildren();
-  String(text || "")
-    .split(/<br\s*\/?>/i)
-    .forEach((line, index) => {
-      if (index > 0) {
-        tooltip.appendChild(document.createElement("br"));
-      }
-      tooltip.appendChild(document.createTextNode(line));
-    });
+  const entries = (Array.isArray(texts) ? texts : [texts])
+    .filter(Boolean)
+    .map(splitOptionTooltipLines);
+  const sharedHeader =
+    entries.length > 1 && entries.every((lines) => lines[0] === entries[0][0]);
+
+  if (sharedHeader) {
+    const header = document.createElement("div");
+    header.className = "option-tooltip-header";
+    header.textContent = entries[0][0];
+    tooltip.appendChild(header);
+  }
+
+  entries.forEach((lines) => {
+    const entry = document.createElement("div");
+    entry.className = "option-tooltip-entry";
+    appendOptionTooltipLines(entry, sharedHeader ? lines.slice(1) : lines);
+    tooltip.appendChild(entry);
+  });
 }
 
 function positionOptionTooltip(chartEl, tooltip, clientX, clientY) {
@@ -218,11 +269,29 @@ function ensureOptionTooltip(chartEl) {
   return tooltip;
 }
 
+function getOptionTooltipTexts(point) {
+  if (!point) {
+    return [];
+  }
+  const pointIndex = Number.isInteger(point.pointIndex)
+    ? point.pointIndex
+    : point.pointNumber;
+  const groupedTexts =
+    point.customdata ||
+    (point.data && point.data.customdata && point.data.customdata[pointIndex]);
+  if (Array.isArray(groupedTexts)) {
+    return groupedTexts.filter(Boolean);
+  }
+
+  const pointText =
+    point.text || (point.data && point.data.text && point.data.text[pointIndex]);
+  return pointText ? [pointText] : [];
+}
+
 function showOptionTooltip(chartEl, eventData) {
   const point = eventData && eventData.points && eventData.points[0];
-  const pointText =
-    point && (point.text || (point.data && point.data.text && point.data.text[point.pointIndex]));
-  if (!pointText) {
+  const tooltipTexts = getOptionTooltipTexts(point);
+  if (tooltipTexts.length === 0) {
     return;
   }
   const sourceEvent = eventData.event || {};
@@ -237,7 +306,7 @@ function showOptionTooltip(chartEl, eventData) {
   const wasVisible = tooltip.dataset.visible === "true";
 
   clearOptionTooltipHide(tooltip);
-  setOptionTooltipContent(tooltip, pointText);
+  setOptionTooltipContent(tooltip, tooltipTexts);
   if (!wasVisible) {
     tooltip.style.visibility = "hidden";
   }
@@ -615,6 +684,7 @@ function buildGrid(snapshot) {
 function renderPanel(id, panel) {
   const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
+  const hasOptions = options.length > 0;
   const countText =
     typeof panel.position_count_text === "string" && panel.position_count_text.trim()
       ? panel.position_count_text.trim()
@@ -626,6 +696,7 @@ function renderPanel(id, panel) {
   const lineColors = options.map((o) => o.marker_line_color);
   const fillColors = options.map((o) => o.marker_fill_color);
   const hoverTexts = options.map((o) => o.hover_text);
+  const groupedHoverTexts = buildGroupedHoverTexts(options);
 
   const uniqueDates = Array.from(new Set(xVals)).sort();
   let xRange;
@@ -641,13 +712,14 @@ function renderPanel(id, panel) {
   const yRange = pickPanelYRange(id, yVals, panel.stock_price);
 
   const traces = [];
-  if (options.length > 0) {
+  if (hasOptions) {
     traces.push({
       type: "scatter",
       mode: "markers",
       x: xVals,
       y: yVals,
       text: hoverTexts,
+      customdata: groupedHoverTexts,
       hoverinfo: "none",
       marker: {
         size: sizes,
@@ -693,7 +765,7 @@ function renderPanel(id, panel) {
     });
   }
 
-  if (options.length === 0) {
+  if (!hasOptions) {
     annotations.push({
       xref: "paper",
       yref: "paper",
@@ -729,12 +801,17 @@ function renderPanel(id, panel) {
       ? { l: 70, r: 20, t: 58, b: 92 }
       : { l: 36, r: 70, t: 58, b: 92 },
     xaxis: {
-      title: { text: "Strike Date", font: { size: 14 }, standoff: 10 },
-      type: "date",
-      tickmode: uniqueDates.length > 0 ? "array" : "auto",
-      tickvals: uniqueDates.length > 0 ? uniqueDates : undefined,
-      ticktext: uniqueDates.length > 0 ? uniqueDates : undefined,
-      range: xRange,
+      // Plotly falls back to epoch dates when a date axis has no data. Hide the
+      // empty x-axis so a price-only panel does not display bogus 2000 dates.
+      visible: hasOptions,
+      title: hasOptions
+        ? { text: "Strike Date", font: { size: 14 }, standoff: 10 }
+        : undefined,
+      type: hasOptions ? "date" : "linear",
+      tickmode: hasOptions ? "array" : "auto",
+      tickvals: hasOptions ? uniqueDates : undefined,
+      ticktext: hasOptions ? uniqueDates : undefined,
+      range: hasOptions ? xRange : [0, 1],
       tickangle: -45,
       automargin: false,
       tickfont: { size: 12 },

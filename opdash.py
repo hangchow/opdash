@@ -41,7 +41,7 @@ from core import (
     _safe_float,
     get_options_map,
     get_options_delta_sum,
-    get_options_short_value_sum,
+    get_options_short_value_sums,
     get_stock_share_delta_map,
     infer_trade_market_filter,
     parse_ports_arg,
@@ -950,7 +950,9 @@ if __name__ == "__main__":
                     0.0,
                 )
                 delta_sum = _safe_float(initial_delta_sum_by_panel.get(key), 0.0)
-                short_value = get_options_short_value_sum(options)
+                call_short_value, put_short_value = get_options_short_value_sums(
+                    options
+                )
 
                 if not options:
                     logger.warning(f"No option positions for {stock_code} on port {port}.")
@@ -966,7 +968,8 @@ if __name__ == "__main__":
                         port,
                         stock_share_count=stock_share_count,
                         delta_sum=delta_sum,
-                        short_value=short_value,
+                        call_short_value=call_short_value,
+                        put_short_value=put_short_value,
                     ),
                     show_y_label=(port_index == 0),
                     y_ticks_on_right=(port_index != 0),
@@ -1000,8 +1003,8 @@ if __name__ == "__main__":
             key: _safe_float(stock_shares, 0.0)
             for key, stock_shares in initial_stock_shares_by_panel.items()
         }
-        last_drawn_short_value = {
-            key: get_options_short_value_sum(options)
+        last_drawn_short_values = {
+            key: get_options_short_value_sums(options)
             for key, options in initial_options_by_panel.items()
         }
         last_handled_options_version = {"value": -1}
@@ -1058,16 +1061,21 @@ if __name__ == "__main__":
                             )
                             delta_sum = _safe_float(latest_delta_sum_snapshot.get(key), 0.0)
                             prev_delta_sum = _safe_float(last_drawn_delta_sum.get(key), 0.0)
-                            short_value = get_options_short_value_sum(options)
-                            prev_short_value = _safe_float(
-                                last_drawn_short_value.get(key), 0.0
+                            call_short_value, put_short_value = (
+                                get_options_short_value_sums(options)
+                            )
+                            prev_call_short_value, prev_put_short_value = (
+                                last_drawn_short_values.get(key, (0.0, 0.0))
                             )
                             if (
                                 round(prev_stock_share_count, 6)
                                 != round(stock_share_count, 6)
                                 or
                                 round(prev_delta_sum, 3) != round(delta_sum, 3)
-                                or round(prev_short_value, 2) != round(short_value, 2)
+                                or round(prev_call_short_value, 2)
+                                != round(call_short_value, 2)
+                                or round(prev_put_short_value, 2)
+                                != round(put_short_value, 2)
                             ):
                                 _apply_panel_title(
                                     ax,
@@ -1076,7 +1084,8 @@ if __name__ == "__main__":
                                         port,
                                         stock_share_count=stock_share_count,
                                         delta_sum=delta_sum,
-                                        short_value=short_value,
+                                        call_short_value=call_short_value,
+                                        put_short_value=put_short_value,
                                     ),
                                     stock_code,
                                 )
@@ -1090,7 +1099,10 @@ if __name__ == "__main__":
                                     )
                                 last_drawn_stock_shares[key] = stock_share_count
                                 last_drawn_delta_sum[key] = delta_sum
-                                last_drawn_short_value[key] = short_value
+                                last_drawn_short_values[key] = (
+                                    call_short_value,
+                                    put_short_value,
+                                )
                                 need_redraw = True
                             if key not in latest_options_snapshot:
                                 continue
@@ -1146,7 +1158,8 @@ if __name__ == "__main__":
                                         port,
                                         stock_share_count=stock_share_count,
                                         delta_sum=delta_sum,
-                                        short_value=short_value,
+                                        call_short_value=call_short_value,
+                                        put_short_value=put_short_value,
                                     ),
                                     show_y_label=(port_index == 0),
                                     y_ticks_on_right=(port_index != 0),

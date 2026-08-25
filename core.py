@@ -932,9 +932,10 @@ def get_options_delta_sum(options):
     return total_delta
 
 
-def get_options_short_value_sum(options):
-    # 统计空头期权市值总和（按绝对值汇总，便于阅读）
-    total_short_value = 0.0
+def get_options_short_value_sums(options):
+    # 分别统计 Call/Put 空头期权市值（按绝对值汇总）
+    call_short_value = 0.0
+    put_short_value = 0.0
     for option in options or []:
         count = _safe_int(option.get("count"), 0)
         if count >= 0:
@@ -942,8 +943,18 @@ def get_options_short_value_sum(options):
         market_val = _safe_float(option.get("market_val"), None)
         if market_val is None:
             continue
-        total_short_value += abs(market_val)
-    return total_short_value
+        option_type = _option_type_text(option.get("type"))
+        if option_type == "CALL":
+            call_short_value += abs(market_val)
+        elif option_type == "PUT":
+            put_short_value += abs(market_val)
+    return call_short_value, put_short_value
+
+
+def get_options_short_value_sum(options):
+    # 保留总和接口，便于旧调用方兼容。
+    call_short_value, put_short_value = get_options_short_value_sums(options)
+    return call_short_value + put_short_value
 
 
 def _get_options_from_positions(positions, stock_code):
@@ -1262,13 +1273,24 @@ def _panel_key(port_index, stock_code):
     return (port_index, stock_code)
 
 
-def _panel_title(stock_code, port, stock_share_count=None, delta_sum=None, short_value=None):
+def _panel_title(
+    stock_code,
+    port,
+    stock_share_count=None,
+    delta_sum=None,
+    call_short_value=None,
+    put_short_value=None,
+):
     title = f"{stock_code} Option Positions (Port {port})"
     metrics = []
     if delta_sum is not None:
         metrics.append(f"delta={_safe_float(delta_sum, 0.0):+.3f}")
-    if short_value is not None:
-        metrics.append(f"short_value={_safe_float(short_value, 0.0):.2f}")
+    if call_short_value is not None:
+        metrics.append(
+            f"call_short_value={_safe_float(call_short_value, 0.0):.2f}"
+        )
+    if put_short_value is not None:
+        metrics.append(f"put_short_value={_safe_float(put_short_value, 0.0):.2f}")
     if not metrics:
         return title
     return f"{title} | {' | '.join(metrics)}"

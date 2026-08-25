@@ -43,7 +43,7 @@ from core import (
     _safe_int,
     get_options_map,
     get_options_delta_sum,
-    get_options_short_value_sum,
+    get_options_short_value_sums,
     get_stock_share_delta_map,
     infer_trade_market_filter,
     parse_ports_arg,
@@ -236,7 +236,9 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             options = [_normalize_option(option) for option in raw_options]
             stock_share_count = _safe_float(stock_shares_by_panel.get(key), 0.0)
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
-            short_value = get_options_short_value_sum(raw_options)
+            call_short_value, put_short_value = get_options_short_value_sums(
+                raw_options
+            )
             position_counts = get_option_position_counts(raw_options)
             panels.append(
                 {
@@ -248,11 +250,13 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                         port,
                         stock_share_count=stock_share_count,
                         delta_sum=delta_sum,
-                        short_value=short_value,
+                        call_short_value=call_short_value,
+                        put_short_value=put_short_value,
                     ),
                     "stock_share_count": stock_share_count,
                     "delta_sum": delta_sum,
-                    "short_value": short_value,
+                    "call_short_value": call_short_value,
+                    "put_short_value": put_short_value,
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
                     "position_count_text": format_option_position_count_text(
