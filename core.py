@@ -1179,6 +1179,7 @@ def _get_option_quotes_batch(quote_ctx, option_codes, quote_lock=None):
                     data.get("option_open_interest", data.get("open_interest")), None
                 ),
                 "delta": _safe_float(data.get("option_delta"), None),
+                "iv": _safe_float(data.get("option_implied_volatility"), None),
                 "contract_size": _safe_int(data.get("option_contract_size"), 100),
                 "stock_owner": data.get("stock_owner"),
                 "strike_date": data.get("strike_time", data.get("option_strike_time")),
@@ -1205,6 +1206,7 @@ def _merge_option_quotes(options, quotes):
         option["volume"] = quote.get("volume")
         option["open_interest"] = quote.get("open_interest")
         option["delta"] = quote.get("delta")
+        option["iv"] = quote.get("iv")
         option["contract_size"] = quote.get("contract_size")
         stock_owner = normalize_stock_code(quote.get("stock_owner"))
         if stock_owner:
@@ -1248,6 +1250,7 @@ def _options_hover_signature(options):
         bid_price = _safe_float(option.get("bid_price"), None)
         ask_price = _safe_float(option.get("ask_price"), None)
         delta = _safe_float(option.get("delta"), None)
+        iv = _safe_float(option.get("iv"), None)
         volume = _safe_int(option.get("volume"), None)
         open_interest = _safe_int(option.get("open_interest"), None)
         profit_ratio = _safe_float(option.get("pl_ratio"), None)
@@ -1260,6 +1263,7 @@ def _options_hover_signature(options):
                 None if bid_price is None else round(bid_price, 4),
                 None if ask_price is None else round(ask_price, 4),
                 None if delta is None else round(delta, 4),
+                None if iv is None else round(iv, 4),
                 volume,
                 open_interest,
                 None if profit_ratio is None else round(profit_ratio, 4),

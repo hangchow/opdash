@@ -108,6 +108,7 @@ def _point_counts_from_options(options):
             "bid_price": option.get("bid_price"),
             "ask_price": option.get("ask_price"),
             "delta": option.get("delta"),
+            "iv": option.get("iv"),
             "volume": option.get("volume"),
             "open_interest": option.get("open_interest"),
             "profit_ratio": option.get("pl_ratio"),
@@ -395,6 +396,8 @@ def _format_option_hover_text(strike_dt, strike_price, details):
         profit_value_text = "N/A" if profit_value is None else f"{profit_value:+.2f}"
         delta = _safe_float(detail.get("delta"), None)
         delta_text = "N/A" if delta is None else f"{delta:+.3f}"
+        iv = _safe_float(detail.get("iv"), None)
+        iv_text = "N/A" if iv is None else f"{iv:.2f}%"
         lines.extend(
             [
                 f"{side_text} {type_text}: count={detail['count']}, price={_fmt_price(detail.get('price'))}",
@@ -406,6 +409,7 @@ def _format_option_hover_text(strike_dt, strike_price, details):
                 ),
                 (
                     f"  delta={delta_text}, "
+                    f"iv={iv_text}, "
                     f"profit%={_fmt_percent(detail.get('profit_ratio'))}, "
                     f"p/l={profit_value_text}"
                 ),

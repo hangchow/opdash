@@ -135,6 +135,8 @@ def _normalize_option(option):
     pl_val_text = "N/A" if pl_val is None else f"{pl_val:+.2f}"
     delta = _safe_float(option.get("delta"), None)
     delta_text = "N/A" if delta is None else f"{delta:+.3f}"
+    iv = _safe_float(option.get("iv"), None)
+    iv_text = "N/A" if iv is None else f"{iv:.2f}%"
     profit_hit = pl_ratio >= get_profit_highlight_threshold()
     line_color = SHORT_COLOR if side == SIDE_SHORT else LONG_COLOR
     marker_area = _marker_area(abs_count)
@@ -147,7 +149,7 @@ def _normalize_option(option):
         f"ask={_fmt_price(option.get('ask_price'))}, "
         f"volume={_fmt_int(option.get('volume'))}, "
         f"oi={_fmt_int(option.get('open_interest'))}, "
-        f"delta={delta_text}<br>"
+        f"delta={delta_text}, iv={iv_text}<br>"
         f"profit%={_fmt_percent(option.get('pl_ratio'))}, "
         f"p/l={pl_val_text}"
     )
@@ -172,6 +174,7 @@ def _normalize_option(option):
         "bid_price": _safe_float(option.get("bid_price"), None),
         "ask_price": _safe_float(option.get("ask_price"), None),
         "delta": delta,
+        "iv": iv,
         "volume": _safe_int(option.get("volume"), None),
         "open_interest": _safe_int(option.get("open_interest"), None),
         "hover_text": hover_text,
