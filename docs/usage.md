@@ -127,6 +127,10 @@ python opdash.py -h
 python opdash_web.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--web_host HOST] [--web_port PORT]
 ```
 
+Web auto-discovery also starts with an empty account and keeps polling for new positions.
+`/healthz` checks HTTP liveness and the deployed release; `/readyz` returns 503 when
+position polls or per-underlying price retrieval become stale. See [gateway deployment](deployment.md).
+
 ### Arguments
 
 - `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account: the underlyings are discovered from the option positions (union across ports) and re-discovered on every poll, so panels are added and removed at runtime as positions open and close — no restart needed. Passing codes explicitly keeps the panel set fixed

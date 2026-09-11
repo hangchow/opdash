@@ -31,11 +31,11 @@ OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:1
 | `opdash_web.py` 在 `main()` 中创建后端和 FastAPI app | 直接执行 Python 入口；单进程，不使用 reload 或多个 worker，避免重复行情连接与轮询 |
 | `--host` / `--port` 是 OpenD，`--web_host` / `--web_port` 是 HTTP | 两组配置分开，HTTP 明确绑定 `192.168.10.1:18080` |
 | `backend.start()` 在 HTTP 监听之前执行 | 启动检查设置明确期限，初始建议 120 秒，依据实际 OpenD 响应耗时调整 |
-| `/healthz` 只返回 `{"ok": true}` | 用于 HTTP 存活检查，不能证明已登录、成功获取持仓或行情新鲜 |
-| 无股票参数且启动时没有期权持仓会退出 | 首次部署可显式指定所需标的；若必须自动发现，先修复空仓启动，使空面板也能启动并继续发现持仓 |
+| `/healthz` 返回存活状态和发布 SHA，`/readyz` 返回数据就绪状态 | 部署时同时校验存活、目标版本和数据成功刷新 |
+| Web 自动发现模式允许启动时空仓，成功轮询为空会清空旧面板 | 空仓也能就绪，后续持仓变化自动发现；GUI 初始解析保留原行为 |
 | 所有 OpenD 端口共享一个 `--host`，最多两个端口 | 配置必须符合此限制；不同主机的 OpenD 不在本次直接支持范围 |
-| `requirements.txt` 未锁定版本，包含 GUI 使用的 matplotlib | 增加 Web 专用依赖输入和适配目标 Python/架构的完整锁定文件；保留 GUI 安装方式 |
-| 前端从 `cdn.plot.ly` 加载 Plotly 2.35.2 | 浏览器需要访问该 CDN；建议将同版本资源及许可证纳入本地静态目录，并让静态资源 URL 随版本变化以避免缓存旧代码 |
+| GUI 的 `requirements.txt` 与 Web 部署依赖分开 | Web 使用目标 Python 3.14 验证的 `requirements-web.lock` |
+| Plotly 2.35.2 和许可证随版本本地发布 | 浏览器无需访问 Plotly CDN；app.js 和 CSS URL 携带发布 SHA |
 
 上述改进已实现：Web 支持空仓启动并使用全部交易市场发现标的；新增 `/readyz`；`requirements-web.lock` 在目标 Python 3.14.4 上生成并验证；Plotly 及许可证保存在 `web/vendor/`。GUI 入口的初始标的解析方式保留。不能复用开发机 macOS 的 `.venv`。
 
@@ -90,7 +90,7 @@ PROFIT_HIGHLIGHT_THRESHOLD=80
 
 服务启用开机启动，使用 `Restart=on-failure`、`RestartSec=15s`，设置合理停止超时。固定启动程序在运行 Python 入口前，每 5 秒检查 `127.0.0.1:11111` 是否接受连接，未启动时保持可中断的等待并限频记录日志；不让服务因等待人工启动而耗尽重试次数。端口打开仅代表 TCP 可连接，登录/查询状态另行判断。应用启动失败后由 systemd 继续限速重试，可使用 `StartLimitIntervalSec=0` 配合上述重试间隔，避免因 OpenD 未就绪而永久停止重试。`network-online.target` 只提供启动顺序，不能保证 OpenD 已登录。
 
-网关重启后的顺序为：systemd 启动 Web 的等待程序 → 用户手动启动并登录 OpenD → Web 自动启动并连接 OpenD。OpenD 不纳入自动部署或自动启动管理，也不配置对一个未定义的 OpenD systemd 服务的强依赖。当前应用在后端初始化之前不监听 HTTP，因此等待期间浏览器暂时无法访问仪表盘；若以后希望显示等待页面，需要调整应用启动生命周期。
+网关重启后的顺序为：systemd 启动 Web 的等待程序 → 用户手动启动并登录 OpenD → Web 自动启动并连接 OpenD。OpenD 不纳入自动部署或自动启动管理，Web 不对 OpenD unit 设置自动启动依赖，保留手动启动 OpenD 的顺序。当前应用在后端初始化之前不监听 HTTP，因此等待期间浏览器暂时无法访问仪表盘；若以后希望显示等待页面，需要调整应用启动生命周期。
 
 Web 限制为单核 CPU、1 GiB 内存；构建限制为单核 CPU、2 GiB 内存并降低 IO/CPU 调度优先级。版本保留与清理限制持续占盘；当前可用磁盘约 717 GiB。应用绑定 LAN 地址，同时在现有防火墙 INPUT 链限定 LAN 接口与实际可信网段，拒绝 WAN 和访客网访问该端口。绑定 LAN IP 本身不能替代防火墙。保留现有转发、NAT 和管理规则。
 
@@ -209,3 +209,15 @@ sudo -u opdash-deploy -H python3 /usr/local/libexec/opdash/deploy.py update --re
 Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更新不会自动覆盖它们；修改这些基础设施文件后，需要管理员重新执行经检查的安装脚本。应用、依赖锁定文件和前端资源会跟随 master 自动发布。
 
 验证命令：`python -m unittest discover -s tests -v`；Web 测试需要先安装 Web 依赖。防火墙由独立 `inet opdash_guard` 表约束 18080 的 LAN 接口/网段及 11111 的本机访问，另通过现有 UFW 放行指定 LAN HTTP 流量；不修改网关 NAT、转发及其他服务规则。
+
+
+## 10. 实机验收记录（2026-09-12）
+
+- 16 项测试通过，覆盖独立版本切换、失败回滚、事务恢复、失败冷却、OpenD 未登录等待、空仓及逐标的行情就绪。
+- HTTP 冒烟检查通过：首页、健康接口、快照及本地 JS/CSS/Plotly 文件均能正常响应。
+- OpenD 完成短信设备验证，并已验证切换到 systemd 后使用记住密码正常登录；未保存明文密码到仓库或启动参数。
+- 首个成功版本 `846d5a8`；LAN 请求 `/healthz`、`/readyz` 返回 200，真实持仓与标的价格就绪。
+- OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止；Web 仅绑定 `192.168.10.1:18080`。
+- 服务开机配置：Web、部署 timer、防火墙已 enable；OpenD 仍为手动 start，符合原启动约定。
+
+故障注入和真实 master 更新的后续验收以 `/var/lib/opdash-deploy/state.json` 与 `journalctl -u opdash-deploy` 的发布记录为准。未重启整台网关，开机行为通过 systemd 配置和服务重启验证。
