@@ -62,7 +62,7 @@ python opdash.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval SEC
 
 ### Arguments
 
-- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account; the underlyings are then discovered from the option positions at startup (union across ports), so newly opened underlyings need a restart to appear
+- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account: the underlyings are discovered from the option positions (union across ports) and re-discovered on every poll, so panels are added and removed at runtime as positions open and close — no restart needed. Passing codes explicitly keeps the panel set fixed
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one or two Futu ports, default `11111`
 - `--poll_interval`: option polling interval seconds, default `10`
@@ -129,7 +129,7 @@ python opdash_web.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval
 
 ### Arguments
 
-- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account; the underlyings are then discovered from the option positions at startup (union across ports), so newly opened underlyings need a restart to appear
+- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account: the underlyings are discovered from the option positions (union across ports) and re-discovered on every poll, so panels are added and removed at runtime as positions open and close — no restart needed. Passing codes explicitly keeps the panel set fixed
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one or two Futu ports, default `11111`
 - `--poll_interval`: option polling interval seconds, default `10`

@@ -45,6 +45,7 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sums,
     get_stock_share_delta_map,
+    _extract_option_stock_codes_from_positions,
     parse_ports_arg,
     resolve_stock_codes,
     safe_quote_ctx,
@@ -229,10 +230,13 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     price_done_at = state.get("price_done_at")
     options_version = state["options_version"]
     price_version = state["price_version"]
+    # 标的可能被轮询线程改写，统一取自同一份快照，避免面板与代码列表错位
+    stock_codes = state.get("stock_codes") or list(backend.stock_codes)
+    stock_codes_version = state.get("stock_codes_version", 0)
 
     panels = []
     for port_index, port in enumerate(backend.ports):
-        for stock_code in backend.stock_codes:
+        for stock_code in stock_codes:
             key = _panel_key(port_index, stock_code)
             raw_options = options_snapshot.get(key, [])
             options = [_normalize_option(option) for option in raw_options]
@@ -283,7 +287,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     return {
         "generated_at": generated_at,
         "header": header,
-        "stock_codes": backend.stock_codes,
+        "stock_codes": stock_codes,
         "ports": backend.ports,
         "price_mode": backend.price_mode,
         "ui_interval": ui_interval,
@@ -291,11 +295,16 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
         "versions": {
             "options": options_version,
             "price": price_version,
+            "stock_codes": stock_codes_version,
         },
         "options_done_at_by_port": options_done_at_by_port,
         "price_done_at": price_done_at,
-        "server_settings": server_settings or {},
-        "server_settings_text": format_server_settings_text(server_settings) if server_settings else "",
+        "server_settings": {**(server_settings or {}), "stock_codes": stock_codes},
+        "server_settings_text": (
+            format_server_settings_text({**server_settings, "stock_codes": stock_codes})
+            if server_settings
+            else ""
+        ),
         "panels": panels,
     }
 
@@ -334,7 +343,7 @@ def main():
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
     try:
-        stock_codes, trade_market_filter = resolve_stock_codes(
+        stock_codes, trade_market_filter, auto_stock_codes = resolve_stock_codes(
             args["stock_codes"], args["host"], args["ports"], logger_obj=logger
         )
     except ValueError as e:
@@ -369,6 +378,9 @@ def main():
         get_stock_prices_with_fallback=_get_stock_prices_with_fallback,
         get_stock_share_delta_map=get_stock_share_delta_map,
         get_options_delta_sum=get_options_delta_sum,
+        discover_stock_codes=(
+            _extract_option_stock_codes_from_positions if auto_stock_codes else None
+        ),
         options_signature=_options_signature,
         options_hover_signature=_options_hover_signature,
         panel_key=_panel_key,

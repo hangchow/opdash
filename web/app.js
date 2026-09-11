@@ -1,4 +1,5 @@
 let initialized = false;
+let lastStockCodesVersion = null;
 let refreshTimer = null;
 let refreshMs = 1000;
 const fullscreenState = {
@@ -893,9 +894,12 @@ async function refresh() {
     updateLegend(snapshot.profit_highlight_threshold);
     updateServerSettings(snapshot);
 
-    if (!initialized) {
+    // 标的可在运行时增减（auto 模式），版本号变化时整块重建网格
+    const stockCodesVersion = snapshot.versions?.stock_codes ?? 0;
+    if (!initialized || stockCodesVersion !== lastStockCodesVersion) {
       buildGrid(snapshot);
       initialized = true;
+      lastStockCodesVersion = stockCodesVersion;
     } else {
       snapshot.panels.forEach((panel) => {
         renderPanel(panelId(panel.port_index, panel.stock_code), panel);

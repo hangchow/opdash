@@ -775,9 +775,11 @@ def discover_option_stock_codes(host, ports, filter_trdmarket=TrdMarket.NONE, lo
 
 
 def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=None):
-    # 返回 (stock_codes, trade_market_filter)；标的留空时按账户期权持仓自动发现
+    # 返回 (stock_codes, trade_market_filter, auto_discovered)
+    # auto_discovered 为真时，标的由账户持仓推导，后续轮询会持续跟随持仓变化
     stock_codes = parse_stock_codes_arg(raw_stock_codes, parser, allow_empty=True)
-    if not stock_codes:
+    auto_discovered = not stock_codes
+    if auto_discovered:
         stock_codes = discover_option_stock_codes(host, ports, logger_obj=logger_obj)
     if not stock_codes:
         message = (
@@ -787,7 +789,7 @@ def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=No
         if parser is not None:
             parser.error(message)
         raise ValueError(message)
-    return stock_codes, infer_trade_market_filter(stock_codes)
+    return stock_codes, infer_trade_market_filter(stock_codes), auto_discovered
 
 
 def _build_stock_code_targets(stock_codes):

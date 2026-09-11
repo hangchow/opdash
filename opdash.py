@@ -43,6 +43,7 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sums,
     get_stock_share_delta_map,
+    _extract_option_stock_codes_from_positions,
     parse_ports_arg,
     resolve_stock_codes,
     safe_quote_ctx,
@@ -865,7 +866,7 @@ if __name__ == "__main__":
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
     try:
-        stock_codes, trade_market_filter = resolve_stock_codes(
+        stock_codes, trade_market_filter, auto_stock_codes = resolve_stock_codes(
             stock_codes_str, host, ports, logger_obj=logger
         )
     except ValueError as e:
@@ -887,14 +888,9 @@ if __name__ == "__main__":
         startup_settings, prefix="startup args"
     )
     port_count = len(ports)
-    row_count = len(stock_codes)
 
-    fig, axs = plt.subplots(
-        row_count,
-        port_count,
-        figsize=(max(10, 9 * port_count), max(6, 3.8 * row_count)),
-        sharex=False,
-        squeeze=False,
+    fig = plt.figure(
+        figsize=(max(10, 9 * port_count), max(6, 3.8 * len(stock_codes)))
     )
 
     backend = OptionDashboardBackend(
@@ -914,6 +910,9 @@ if __name__ == "__main__":
         get_stock_prices_with_fallback=_get_stock_prices_with_fallback,
         get_stock_share_delta_map=get_stock_share_delta_map,
         get_options_delta_sum=get_options_delta_sum,
+        discover_stock_codes=(
+            _extract_option_stock_codes_from_positions if auto_stock_codes else None
+        ),
         options_signature=_options_signature,
         options_hover_signature=_options_hover_signature,
         panel_key=_panel_key,
@@ -928,13 +927,7 @@ if __name__ == "__main__":
     try:
         backend.start()
         backend_state = backend.get_state_snapshot()
-        initial_options_by_panel = backend_state["options"]
-        initial_plot_signatures = backend_state["options_sig"]
-        initial_hover_signatures = backend_state["hover_sig"]
-        initial_prices = backend_state["prices"]
         initial_price_done_at = backend_state.get("price_done_at")
-        initial_delta_sum_by_panel = backend_state.get("delta_sum_by_panel", {})
-        initial_stock_shares_by_panel = backend_state.get("stock_shares_by_panel", {})
         initial_options_done_at_by_port = backend_state.get("options_done_at_by_port", {})
         initial_header = build_dashboard_header_data(
             ui_interval=ui_interval,
@@ -948,76 +941,114 @@ if __name__ == "__main__":
         base_lines = {}
         plot_states = {}
         last_drawn_prices = {}
-        for port_index, port in enumerate(ports):
-            for row_index, stock_code in enumerate(stock_codes):
-                key = _panel_key(port_index, stock_code)
-                ax = axs[row_index][port_index]
-                options = initial_options_by_panel.get(key, [])
-                stock_price = initial_prices.get(stock_code)
-                stock_share_count = _safe_float(
-                    initial_stock_shares_by_panel.get(key),
-                    0.0,
-                )
-                delta_sum = _safe_float(initial_delta_sum_by_panel.get(key), 0.0)
-                call_short_value, put_short_value = get_options_short_value_sums(
-                    options
-                )
+        last_drawn_options = {}
+        last_hover_options = {}
+        last_drawn_delta_sum = {}
+        last_drawn_stock_shares = {}
+        last_drawn_short_values = {}
+        header_state = {"status_text": None, "status_artist": None}
+        # 标的可在运行时增减，面板网格与每面板缓存都需要能整体重建
+        panel_ctx = {"stock_codes": list(stock_codes), "axs": None}
 
-                if not options:
-                    logger.warning(f"No option positions for {stock_code} on port {port}.")
+        def build_panels(panel_stock_codes, state, header_data, footer_text):
+            # 按当前标的重建 subplot 网格与全部面板缓存（首次启动与标的变化共用）
+            panel_stock_codes = list(panel_stock_codes)
+            options_by_panel = state["options"]
+            prices = state["prices"]
+            delta_sum_by_panel = state.get("delta_sum_by_panel", {})
+            stock_shares_by_panel = state.get("stock_shares_by_panel", {})
 
-                base_line, base_text, state = plot_chart(
-                    ax,
-                    options,
-                    stock_code,
-                    stock_price,
-                    stock_share_count=stock_share_count,
-                    chart_title=_panel_title(
+            fig.clear()
+            fig.set_size_inches(
+                max(10, 9 * port_count),
+                max(6, 3.8 * len(panel_stock_codes)),
+                forward=True,
+            )
+            axs = fig.subplots(
+                len(panel_stock_codes),
+                port_count,
+                sharex=False,
+                squeeze=False,
+            )
+            panel_ctx["stock_codes"] = panel_stock_codes
+            panel_ctx["axs"] = axs
+
+            for store in (
+                base_lines,
+                plot_states,
+                last_drawn_prices,
+                last_drawn_options,
+                last_hover_options,
+                last_drawn_delta_sum,
+                last_drawn_stock_shares,
+                last_drawn_short_values,
+            ):
+                store.clear()
+
+            for port_index, port in enumerate(ports):
+                for row_index, stock_code in enumerate(panel_stock_codes):
+                    key = _panel_key(port_index, stock_code)
+                    ax = axs[row_index][port_index]
+                    options = options_by_panel.get(key, [])
+                    stock_price = prices.get(stock_code)
+                    stock_share_count = _safe_float(
+                        stock_shares_by_panel.get(key),
+                        0.0,
+                    )
+                    delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
+                    call_short_value, put_short_value = get_options_short_value_sums(
+                        options
+                    )
+
+                    if not options:
+                        logger.warning(
+                            f"No option positions for {stock_code} on port {port}."
+                        )
+
+                    base_line, base_text, panel_state = plot_chart(
+                        ax,
+                        options,
                         stock_code,
-                        port,
+                        stock_price,
                         stock_share_count=stock_share_count,
-                        delta_sum=delta_sum,
-                        call_short_value=call_short_value,
-                        put_short_value=put_short_value,
-                    ),
-                    show_y_label=(port_index == 0),
-                    y_ticks_on_right=(port_index != 0),
-                )
-                base_lines[key] = (base_line, base_text)
-                plot_states[key] = state
-                if base_line is not None and stock_price is not None:
-                    last_drawn_prices[key] = stock_price
+                        chart_title=_panel_title(
+                            stock_code,
+                            port,
+                            stock_share_count=stock_share_count,
+                            delta_sum=delta_sum,
+                            call_short_value=call_short_value,
+                            put_short_value=put_short_value,
+                        ),
+                        show_y_label=(port_index == 0),
+                        y_ticks_on_right=(port_index != 0),
+                    )
+                    base_lines[key] = (base_line, base_text)
+                    plot_states[key] = panel_state
+                    if base_line is not None and stock_price is not None:
+                        last_drawn_prices[key] = stock_price
+                    last_drawn_options[key] = state["options_sig"].get(key, ())
+                    last_hover_options[key] = state["hover_sig"].get(key, ())
+                    last_drawn_delta_sum[key] = delta_sum
+                    last_drawn_stock_shares[key] = stock_share_count
+                    last_drawn_short_values[key] = (call_short_value, put_short_value)
 
-        header_status_artist = _apply_layout_with_header_footer(
-            fig,
-            initial_header["title"],
-            initial_header["status_text"],
-            startup_footer_text,
-        )
-        _add_marker_legend(fig)
+            header_state["status_artist"] = _apply_layout_with_header_footer(
+                fig,
+                header_data["title"],
+                header_data["status_text"],
+                footer_text,
+            )
+            header_state["status_text"] = header_data["status_text"]
+            _add_marker_legend(fig)
+
+        build_panels(stock_codes, backend_state, initial_header, startup_footer_text)
         maximize_figure_window(fig)
         fig.canvas.draw()
-        header_state = {
-            "status_text": initial_header["status_text"],
-            "status_artist": header_status_artist,
-        }
-
-        last_drawn_options = dict(initial_plot_signatures)
-        last_hover_options = dict(initial_hover_signatures)
-        last_drawn_delta_sum = {
-            key: _safe_float(delta, 0.0)
-            for key, delta in initial_delta_sum_by_panel.items()
-        }
-        last_drawn_stock_shares = {
-            key: _safe_float(stock_shares, 0.0)
-            for key, stock_shares in initial_stock_shares_by_panel.items()
-        }
-        last_drawn_short_values = {
-            key: get_options_short_value_sums(options)
-            for key, options in initial_options_by_panel.items()
-        }
         last_handled_options_version = {"value": -1}
         last_handled_price_version = {"value": -1}
+        last_handled_stock_codes_version = {
+            "value": backend_state.get("stock_codes_version", 0)
+        }
 
         def _on_close(event):
             backend.stop()
@@ -1036,6 +1067,7 @@ if __name__ == "__main__":
             latest_options_version = backend_state["options_version"]
             latest_price_version = backend_state["price_version"]
             latest_price_done_at = backend_state.get("price_done_at")
+            latest_stock_codes_version = backend_state.get("stock_codes_version", 0)
             try:
                 need_redraw = False
                 header_data = build_dashboard_header_data(
@@ -1046,6 +1078,20 @@ if __name__ == "__main__":
                     ports=ports,
                     options_done_at_by_port=latest_options_done_at_by_port,
                 )
+                if latest_stock_codes_version != last_handled_stock_codes_version["value"]:
+                    # 标的增减：整块重建网格，本轮不再走增量更新
+                    build_panels(
+                        backend_state.get("stock_codes", panel_ctx["stock_codes"]),
+                        backend_state,
+                        header_data,
+                        startup_footer_text,
+                    )
+                    last_handled_stock_codes_version["value"] = latest_stock_codes_version
+                    last_handled_options_version["value"] = latest_options_version
+                    last_handled_price_version["value"] = latest_price_version
+                    fig.canvas.draw_idle()
+                    return
+
                 latest_status_text = header_data["status_text"]
                 if latest_status_text != header_state["status_text"]:
                     header_state["status_artist"].set_text(
@@ -1054,8 +1100,10 @@ if __name__ == "__main__":
                     header_state["status_text"] = latest_status_text
                     need_redraw = True
                 if latest_options_version != last_handled_options_version["value"]:
+                    stock_codes_now = panel_ctx["stock_codes"]
+                    axs = panel_ctx["axs"]
                     for port_index, port in enumerate(ports):
-                        for row_index, stock_code in enumerate(stock_codes):
+                        for row_index, stock_code in enumerate(stock_codes_now):
                             key = _panel_key(port_index, stock_code)
                             ax = axs[row_index][port_index]
                             options = latest_options_snapshot.get(key, [])
@@ -1200,8 +1248,10 @@ if __name__ == "__main__":
                     last_handled_options_version["value"] = latest_options_version
 
                 if latest_price_version != last_handled_price_version["value"]:
+                    stock_codes_now = panel_ctx["stock_codes"]
+                    axs = panel_ctx["axs"]
                     for port_index, port in enumerate(ports):
-                        for row_index, stock_code in enumerate(stock_codes):
+                        for row_index, stock_code in enumerate(stock_codes_now):
                             key = _panel_key(port_index, stock_code)
                             line, text = base_lines.get(key, (None, None))
                             if line is None or stock_code not in latest_prices_snapshot:

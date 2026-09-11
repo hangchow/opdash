@@ -31,6 +31,7 @@ class OptionDashboardBackend:
         get_stock_prices_with_fallback,
         get_stock_share_delta_map,
         get_options_delta_sum,
+        discover_stock_codes=None,
         options_signature,
         options_hover_signature,
         panel_key,
@@ -60,6 +61,8 @@ class OptionDashboardBackend:
         self.get_stock_prices_with_fallback = get_stock_prices_with_fallback
         self.get_stock_share_delta_map = get_stock_share_delta_map
         self.get_options_delta_sum = get_options_delta_sum
+        # 传入时表示标的由账户持仓推导，每轮轮询都会重新发现并增删面板
+        self.discover_stock_codes = discover_stock_codes
         self.options_signature = options_signature
         self.options_hover_signature = options_hover_signature
         self.panel_key = panel_key
@@ -92,9 +95,11 @@ class OptionDashboardBackend:
         self.latest_delta_sum_by_panel = {}
         self.latest_stock_shares_by_panel = {}
         self.options_done_at_by_port = {}
+        self.discovered_codes_by_port = {}
         self.price_done_at = None
         self.options_version = 0
         self.price_version = 0
+        self.stock_codes_version = 0
 
     @staticmethod
     def _safe_float(value):
@@ -237,6 +242,49 @@ class OptionDashboardBackend:
             self.stop()
             raise
 
+    def _refresh_auto_stock_codes(self, port, positions):
+        # auto 模式下每轮按持仓重新发现标的；多端口取并集，变化时提升版本号
+        if self.discover_stock_codes is None:
+            return False
+        discovered = list(self.discover_stock_codes(positions))
+        with self.options_lock:
+            self.discovered_codes_by_port[port] = discovered
+            merged = sorted(
+                {code for codes in self.discovered_codes_by_port.values() for code in codes}
+            )
+            # 全空通常意味着这一轮持仓查询异常，保留上一次的面板而不是清空
+            if not merged or merged == self.stock_codes:
+                return False
+            previous = list(self.stock_codes)
+            self.stock_codes = merged
+            self._prune_panel_state(merged)
+        with self.version_lock:
+            self.stock_codes_version += 1
+        self.logger.info(
+            "Stock codes changed on port %s: +[%s] -[%s] -> %s",
+            port,
+            ",".join(code for code in merged if code not in previous) or "-",
+            ",".join(code for code in previous if code not in merged) or "-",
+            ",".join(merged),
+        )
+        return True
+
+    def _prune_panel_state(self, stock_codes):
+        # 调用方需持有 options_lock：丢掉已消失标的的面板状态，避免快照残留旧面板
+        keep = set(stock_codes)
+        for store in (
+            self.latest_options,
+            self.latest_option_code,
+            self.latest_options_sig,
+            self.latest_hover_sig,
+            self.latest_delta_sum_by_panel,
+            self.latest_stock_shares_by_panel,
+        ):
+            for key in [k for k in store if k[1] not in keep]:
+                del store[key]
+        for stock_code in [c for c in self.latest_price_option_code if c not in keep]:
+            del self.latest_price_option_code[stock_code]
+
     @staticmethod
     def _flatten_options(options_snapshot):
         # get_options_map 已经合并过行情，摊平后复用，避免重复请求期权快照
@@ -287,10 +335,14 @@ class OptionDashboardBackend:
             delta_sum_by_panel_snapshot = dict(self.latest_delta_sum_by_panel)
             stock_shares_by_panel_snapshot = dict(self.latest_stock_shares_by_panel)
             options_done_at_by_port_snapshot = dict(self.options_done_at_by_port)
+            stock_codes_snapshot = list(self.stock_codes)
         with self.version_lock:
             options_version = self.options_version
             price_version = self.price_version
+            stock_codes_version = self.stock_codes_version
         return {
+            "stock_codes": stock_codes_snapshot,
+            "stock_codes_version": stock_codes_version,
             "prices": prices_snapshot,
             "price_done_at": price_done_at_snapshot,
             "options": options_snapshot,
@@ -333,7 +385,6 @@ class OptionDashboardBackend:
                 self.logger.error("poll price error: %s", e)
             finally:
                 self.stop_event.wait(interval)
-
     def _poll_options_by_port(self, port_index, port, interval):
         trade_ctx = self.trade_ctxs[port]
         quote_ctx = self.quote_ctxs[port]
@@ -347,9 +398,12 @@ class OptionDashboardBackend:
                     trade_lock,
                     purpose=f"{self.poll_purpose_prefix}:{port}",
                 )
+                # 先按最新持仓刷新标的，再据此取期权，保证新标的当轮就有数据
+                self._refresh_auto_stock_codes(port, positions_snapshot)
+                stock_codes = list(self.stock_codes)
                 options_snapshot = self.get_options_map(
                     trade_ctx,
-                    self.stock_codes,
+                    stock_codes,
                     positions=positions_snapshot,
                     quote_ctx=quote_ctx,
                     quote_lock=quote_lock,
@@ -363,7 +417,7 @@ class OptionDashboardBackend:
                 # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
-                    self.stock_codes,
+                    stock_codes,
                     option_items=self._flatten_options(options_snapshot),
                 )
 
@@ -377,7 +431,7 @@ class OptionDashboardBackend:
                 }
 
                 with self.options_lock:
-                    for stock_code in self.stock_codes:
+                    for stock_code in stock_codes:
                         key = self.panel_key(port_index, stock_code)
                         options = options_snapshot.get(stock_code, [])
                         self.latest_options[key] = options
@@ -392,7 +446,7 @@ class OptionDashboardBackend:
                             + self.get_options_delta_sum(options)
                         )
 
-                    for stock_code in self.stock_codes:
+                    for stock_code in stock_codes:
                         self.latest_price_option_code[stock_code] = self.pick_price_option_code(
                             stock_code,
                             self.latest_option_code,

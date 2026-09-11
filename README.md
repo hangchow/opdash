@@ -37,7 +37,9 @@ GUI example:
 python opdash.py US.UVIX --port 11111,22222
 ```
 
-Omit the stock codes to show every option held in the account:
+Omit the stock codes to show every option held in the account. The underlyings are
+re-discovered on every poll, so panels appear and disappear as positions are opened and
+closed, without restarting:
 
 ```bash
 python opdash.py --port 11111
