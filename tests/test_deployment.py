@@ -89,6 +89,17 @@ class DeploymentTests(unittest.TestCase):
             d.point("current", self.new)
         self.assertEqual(d.linked("current"), self.old)
 
+    def test_bootstrap_waits_for_login_not_just_tcp(self):
+        d.point("current", None)
+        with patch.object(d, "run", return_value=self.new), patch.object(d, "prepare"), patch.object(d, "opend_available", return_value=True), patch.object(d, "opend_logged_in", return_value=False), patch.object(d, "control") as control:
+            d.update({}, {}, False)
+        control.assert_not_called()
+        self.assertIsNone(d.linked("current"))
+
+    def test_login_probe_timeout_is_dependency_wait(self):
+        with patch.object(d, "run", side_effect=d.subprocess.TimeoutExpired("probe", 15)):
+            self.assertFalse(d.opend_logged_in({}, self.new))
+
 
 if __name__ == "__main__":
     unittest.main()

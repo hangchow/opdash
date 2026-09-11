@@ -137,6 +137,30 @@ def request(cfg, path, json_body=True):
     return json.loads(body) if json_body else body
 
 
+def opend_logged_in(cfg, sha):
+    # Used for bootstrap, where there is no existing /readyz to check.
+    # The SDK may retry login forever: isolate it in a bounded subprocess.
+    probe = """
+import sys
+from futu import OpenQuoteContext, RET_OK
+for port in sys.argv[2].split(','):
+    ctx = OpenQuoteContext(host=sys.argv[1], port=int(port))
+    try:
+        ret, state = ctx.get_global_state()
+        if ret != RET_OK or not (state.get('qot_logined') and state.get('trd_logined')):
+            raise SystemExit(1)
+    finally:
+        ctx.close()
+"""
+    try:
+        run([ROOT / "releases" / sha / ".venv/bin/python", "-c", probe,
+             cfg.get("FUTU_HOST", "127.0.0.1"), cfg.get("FUTU_PORTS", "11111")],
+            timeout=15, capture=True)
+        return True
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return False
+
+
 def healthy(cfg, sha, *, full=False):
     try:
         health = request(cfg, "/healthz")
@@ -276,7 +300,9 @@ def update(state, cfg, retry):
     try:
         prepare(sha)
         current = linked("current")
-        if not opend_available(cfg) or (current and not healthy(cfg, current)):
+        if (not opend_available(cfg)
+                or (current and not healthy(cfg, current))
+                or (not current and not opend_logged_in(cfg, sha))):
             log(f"prepared {sha}; waiting for OpenD/current service readiness")
             return
         stage = "activate"
