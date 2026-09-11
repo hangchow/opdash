@@ -100,6 +100,41 @@ class DeploymentTests(unittest.TestCase):
         with patch.object(d, "run", side_effect=d.subprocess.TimeoutExpired("probe", 15)):
             self.assertFalse(d.opend_logged_in({}, self.new))
 
+    def test_login_probe_receives_rsa_key_for_encrypted_opend(self):
+        with patch.object(d, "run") as run:
+            self.assertTrue(d.opend_logged_in({"FUTU_RSA_PRIVATE_KEY": "/private/key.pem"}, self.new))
+        self.assertEqual(run.call_args.args[0][-1], "/private/key.pem")
+
+    def test_launcher_encrypts_retained_release_before_import(self):
+        import os
+        import subprocess
+        import sys
+        from deploy.start import ENCRYPTED_BOOTSTRAP
+
+        directory = Path(self.temp.name)
+        (directory / 'futu.py').write_text('''
+class SysConfig:
+    key = None
+    encrypted = False
+    @classmethod
+    def set_init_rsa_file(cls, key): cls.key = key
+    @classmethod
+    def enable_proto_encrypt(cls, enabled): cls.encrypted = enabled
+''')
+        script = directory / 'old_dashboard.py'
+        script.write_text('''
+import sys
+from futu import SysConfig
+assert SysConfig.key == '/private/key.pem'
+assert SysConfig.encrypted is True
+assert sys.argv[0].endswith('old_dashboard.py')
+assert sys.argv[1:] == ['--host', '127.0.0.1']
+''')
+        subprocess.run([sys.executable, '-c', ENCRYPTED_BOOTSTRAP,
+                        str(script), '--host', '127.0.0.1'], cwd=directory,
+                       env={**os.environ, 'FUTU_RSA_PRIVATE_KEY': '/private/key.pem'},
+                       check=True, timeout=10)
+
 
 if __name__ == "__main__":
     unittest.main()

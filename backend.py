@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from contextlib import ExitStack
 from threading import Event, Lock, Thread
 
+from opend_status import OpenDStatus
+
 SHUTDOWN_JOIN_TIMEOUT = 3.0  # 退出时等待轮询线程收尾的总预算（秒）
 SHUTDOWN_MIN_JOIN = 1.0      # 预算耗尽后，每个线程仍保底等待的秒数
 
@@ -75,6 +77,8 @@ class OptionDashboardBackend:
         self.options_thread_name_prefix = options_thread_name_prefix
 
         self.stop_event = Event()
+        self.status = OpenDStatus(host, ports)
+        self.initialized = False
         self.price_lock = Lock()
         self.options_lock = Lock()
         self.version_lock = Lock()
@@ -115,21 +119,38 @@ class OptionDashboardBackend:
 
     def start(self):
         self.stop_event.clear()
+        self.initialized = False
         self.exit_stack = ExitStack()
         try:
             for port in self.ports:
-                self.trade_ctxs[port] = self.exit_stack.enter_context(
-                    self.safe_trade_ctx(
-                        self.host,
-                        port,
-                        filter_trdmarket=self.trade_market_filter,
+                with self.status.operation('connection', port):
+                    self.trade_ctxs[port] = self.exit_stack.enter_context(
+                        self.safe_trade_ctx(
+                            self.host,
+                            port,
+                            filter_trdmarket=self.trade_market_filter,
+                        )
                     )
-                )
-                self.quote_ctxs[port] = self.exit_stack.enter_context(
-                    self.safe_quote_ctx(self.host, port)
-                )
+                    self.quote_ctxs[port] = self.exit_stack.enter_context(
+                        self.safe_quote_ctx(self.host, port)
+                    )
+                self.status.clear('connection', port)
+                if self.stop_event.is_set():
+                    return
                 self.trade_locks[port] = Lock()
                 self.quote_locks[port] = Lock()
+
+            # Discover without opening a separate blocking connection before HTTP starts.
+            initial_positions = {}
+            for port in self.ports:
+                if self.stop_event.is_set():
+                    return
+                with self.status.operation('positions', port):
+                    initial_positions[port] = self.query_positions_with_log(
+                        self.trade_ctxs[port], self.trade_locks[port],
+                        purpose=f'{self.init_purpose_prefix}:{port}',
+                    )
+                self._refresh_auto_stock_codes(port, initial_positions[port])
 
             initial_options_by_panel = {}
             initial_option_code_by_panel = {}
@@ -145,22 +166,15 @@ class OptionDashboardBackend:
                 trade_lock = self.trade_locks[port]
                 quote_lock = self.quote_locks[port]
 
-                positions_snapshot = self.query_positions_with_log(
-                    trade_ctx,
-                    trade_lock,
-                    purpose=f"{self.init_purpose_prefix}:{port}",
-                )
-                if self.discover_stock_codes is not None:
-                    self.discovered_codes_by_port[port] = list(
-                        self.discover_stock_codes(positions_snapshot)
+                positions_snapshot = initial_positions[port]
+                with self.status.operation('positions', port):
+                    options_snapshot = self.get_options_map(
+                        trade_ctx,
+                        self.stock_codes,
+                        positions=positions_snapshot,
+                        quote_ctx=quote_ctx,
+                        quote_lock=quote_lock,
                     )
-                options_snapshot = self.get_options_map(
-                    trade_ctx,
-                    self.stock_codes,
-                    positions=positions_snapshot,
-                    quote_ctx=quote_ctx,
-                    quote_lock=quote_lock,
-                )
                 # option_items 由上面的 get_options_map 取回（行情已合并），
                 # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
                 stock_share_delta_map = self.get_stock_share_delta_map(
@@ -186,18 +200,20 @@ class OptionDashboardBackend:
                     )
                     if stock_code not in initial_price_option_codes and option_code:
                         initial_price_option_codes[stock_code] = option_code
-                self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
+                with self.options_lock:
+                    self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
 
             price_source_port = self.ports[0]
             price_quote_ctx = self.quote_ctxs[price_source_port]
             price_quote_lock = self.quote_locks[price_source_port]
-            initial_prices, initial_price_changes = self.get_stock_prices_with_fallback(
-                price_quote_ctx,
-                self.stock_codes,
-                initial_price_option_codes,
-                price_mode=self.price_mode,
-                quote_lock=price_quote_lock,
-            )
+            with self.status.operation('prices', price_source_port):
+                initial_prices, initial_price_changes = self.get_stock_prices_with_fallback(
+                    price_quote_ctx,
+                    self.stock_codes,
+                    initial_price_option_codes,
+                    price_mode=self.price_mode,
+                    quote_lock=price_quote_lock,
+                )
             initial_price_done_at = (
                 datetime.now(timezone.utc).isoformat() if initial_prices else None
             )
@@ -224,6 +240,9 @@ class OptionDashboardBackend:
                         self.port_count,
                     )
 
+            if self.stop_event.is_set():
+                return
+            self.initialized = True
             t = Thread(
                 target=self._poll_price_all,
                 args=(price_source_port, self.price_interval),
@@ -393,11 +412,21 @@ class OptionDashboardBackend:
                 for code in codes
             )
         return {
-            "ok": positions_ok and prices_ok and not self.stop_event.is_set(),
+            "ok": positions_ok and prices_ok and self.initialized
+                  and not self.stop_event.is_set() and not self.status.errors(),
             "positions_ok": positions_ok,
             "prices_ok": prices_ok,
             "empty": not codes,
         }
+
+    def get_connection_status(self):
+        errors = self.status.errors()
+        readiness = self.get_readiness()
+        state = ('error' if errors else 'starting' if not self.initialized
+                 else 'ready' if readiness['ok'] else 'stale')
+        return {'state': state, 'host': self.host, 'ports': self.ports,
+                'errors': errors, 'positions_ok': readiness['positions_ok'],
+                'prices_ok': readiness['prices_ok']}
 
     def _poll_price_all(self, price_source_port, interval):
         quote_ctx = self.quote_ctxs[price_source_port]
@@ -405,30 +434,31 @@ class OptionDashboardBackend:
 
         while not self.stop_event.is_set():
             try:
-                with self.options_lock:
-                    option_code_snapshot = {
-                        stock_code: option_code
-                        for stock_code, option_code in self.latest_price_option_code.items()
-                        if option_code
-                    }
-                prices, price_changes = self.get_stock_prices_with_fallback(
-                    quote_ctx,
-                    self.stock_codes,
-                    option_code_snapshot,
-                    price_mode=self.price_mode,
-                    quote_lock=quote_lock,
-                )
-                if prices:
-                    price_done_at = datetime.now(timezone.utc).isoformat()
-                    with self.price_lock:
-                        self.latest_prices.update(prices)
-                        self.latest_price_changes.update(price_changes)
-                        self.price_done_at = price_done_at
-                        for code, price in prices.items():
-                            if self._safe_float(price) is not None:
-                                self.price_success_at[code] = price_done_at
-                    with self.version_lock:
-                        self.price_version += 1
+                with self.status.operation('prices', price_source_port):
+                    with self.options_lock:
+                        option_code_snapshot = {
+                            stock_code: option_code
+                            for stock_code, option_code in self.latest_price_option_code.items()
+                            if option_code
+                        }
+                    prices, price_changes = self.get_stock_prices_with_fallback(
+                        quote_ctx,
+                        self.stock_codes,
+                        option_code_snapshot,
+                        price_mode=self.price_mode,
+                        quote_lock=quote_lock,
+                    )
+                    if prices:
+                        price_done_at = datetime.now(timezone.utc).isoformat()
+                        with self.price_lock:
+                            self.latest_prices.update(prices)
+                            self.latest_price_changes.update(price_changes)
+                            self.price_done_at = price_done_at
+                            for code, price in prices.items():
+                                if self._safe_float(price) is not None:
+                                    self.price_success_at[code] = price_done_at
+                        with self.version_lock:
+                            self.price_version += 1
             except Exception as e:
                 self.logger.error("poll price error: %s", e)
             finally:
@@ -441,69 +471,70 @@ class OptionDashboardBackend:
 
         while not self.stop_event.is_set():
             try:
-                positions_snapshot = self.query_positions_with_log(
-                    trade_ctx,
-                    trade_lock,
-                    purpose=f"{self.poll_purpose_prefix}:{port}",
-                )
-                # 先按最新持仓刷新标的，再据此取期权，保证新标的当轮就有数据
-                self._refresh_auto_stock_codes(port, positions_snapshot)
-                stock_codes = list(self.stock_codes)
-                options_snapshot = self.get_options_map(
-                    trade_ctx,
-                    stock_codes,
-                    positions=positions_snapshot,
-                    quote_ctx=quote_ctx,
-                    quote_lock=quote_lock,
-                )
-                option_code_snapshot = {
-                    stock_code: (options[0]["code"] if options else None)
-                    for stock_code, options in options_snapshot.items()
-                }
+                with self.status.operation('positions', port):
+                    positions_snapshot = self.query_positions_with_log(
+                        trade_ctx,
+                        trade_lock,
+                        purpose=f"{self.poll_purpose_prefix}:{port}",
+                    )
+                    # 先按最新持仓刷新标的，再据此取期权，保证新标的当轮就有数据
+                    self._refresh_auto_stock_codes(port, positions_snapshot)
+                    stock_codes = list(self.stock_codes)
+                    options_snapshot = self.get_options_map(
+                        trade_ctx,
+                        stock_codes,
+                        positions=positions_snapshot,
+                        quote_ctx=quote_ctx,
+                        quote_lock=quote_lock,
+                    )
+                    option_code_snapshot = {
+                        stock_code: (options[0]["code"] if options else None)
+                        for stock_code, options in options_snapshot.items()
+                    }
 
-                # option_items 由上面的 get_options_map 取回（行情已合并），
-                # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
-                stock_share_delta_map = self.get_stock_share_delta_map(
-                    positions_snapshot,
-                    stock_codes,
-                    option_items=self._flatten_options(options_snapshot),
-                )
+                    # option_items 由上面的 get_options_map 取回（行情已合并），
+                    # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
+                    stock_share_delta_map = self.get_stock_share_delta_map(
+                        positions_snapshot,
+                        stock_codes,
+                        option_items=self._flatten_options(options_snapshot),
+                    )
 
-                options_sig_snapshot = {
-                    stock_code: self.options_signature(options)
-                    for stock_code, options in options_snapshot.items()
-                }
-                hover_sig_snapshot = {
-                    stock_code: self.options_hover_signature(options)
-                    for stock_code, options in options_snapshot.items()
-                }
+                    options_sig_snapshot = {
+                        stock_code: self.options_signature(options)
+                        for stock_code, options in options_snapshot.items()
+                    }
+                    hover_sig_snapshot = {
+                        stock_code: self.options_hover_signature(options)
+                        for stock_code, options in options_snapshot.items()
+                    }
 
-                with self.options_lock:
-                    for stock_code in stock_codes:
-                        key = self.panel_key(port_index, stock_code)
-                        options = options_snapshot.get(stock_code, [])
-                        self.latest_options[key] = options
-                        self.latest_option_code[key] = option_code_snapshot.get(stock_code)
-                        self.latest_options_sig[key] = options_sig_snapshot.get(stock_code, ())
-                        self.latest_hover_sig[key] = hover_sig_snapshot.get(stock_code, ())
-                        self.latest_stock_shares_by_panel[key] = stock_share_delta_map.get(
-                            stock_code, 0.0
-                        )
-                        self.latest_delta_sum_by_panel[key] = (
-                            stock_share_delta_map.get(stock_code, 0.0)
-                            + self.get_options_delta_sum(options)
-                        )
+                    with self.options_lock:
+                        for stock_code in stock_codes:
+                            key = self.panel_key(port_index, stock_code)
+                            options = options_snapshot.get(stock_code, [])
+                            self.latest_options[key] = options
+                            self.latest_option_code[key] = option_code_snapshot.get(stock_code)
+                            self.latest_options_sig[key] = options_sig_snapshot.get(stock_code, ())
+                            self.latest_hover_sig[key] = hover_sig_snapshot.get(stock_code, ())
+                            self.latest_stock_shares_by_panel[key] = stock_share_delta_map.get(
+                                stock_code, 0.0
+                            )
+                            self.latest_delta_sum_by_panel[key] = (
+                                stock_share_delta_map.get(stock_code, 0.0)
+                                + self.get_options_delta_sum(options)
+                            )
 
-                    for stock_code in stock_codes:
-                        self.latest_price_option_code[stock_code] = self.pick_price_option_code(
-                            stock_code,
-                            self.latest_option_code,
-                            self.port_count,
-                        )
-                    self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
+                        for stock_code in stock_codes:
+                            self.latest_price_option_code[stock_code] = self.pick_price_option_code(
+                                stock_code,
+                                self.latest_option_code,
+                                self.port_count,
+                            )
+                        self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
 
-                with self.version_lock:
-                    self.options_version += 1
+                    with self.version_lock:
+                        self.options_version += 1
             except Exception as e:
                 self.logger.error("poll options error on port %s: %s", port, e)
             finally:

@@ -145,7 +145,10 @@ def opend_logged_in(cfg, sha):
     # The SDK may retry login forever: isolate it in a bounded subprocess.
     probe = """
 import sys
-from futu import OpenQuoteContext, RET_OK
+from futu import OpenQuoteContext, RET_OK, SysConfig
+if sys.argv[3]:
+    SysConfig.set_init_rsa_file(sys.argv[3])
+    SysConfig.enable_proto_encrypt(True)
 for port in sys.argv[2].split(','):
     ctx = OpenQuoteContext(host=sys.argv[1], port=int(port))
     try:
@@ -157,7 +160,8 @@ for port in sys.argv[2].split(','):
 """
     try:
         run([ROOT / "releases" / sha / ".venv/bin/python", "-c", probe,
-             cfg.get("FUTU_HOST", "127.0.0.1"), cfg.get("FUTU_PORTS", "11111")],
+             cfg.get("FUTU_HOST", "127.0.0.1"), cfg.get("FUTU_PORTS", "11111"),
+             cfg.get("FUTU_RSA_PRIVATE_KEY", "")],
             timeout=15, capture=True)
         return True
     except (RuntimeError, subprocess.TimeoutExpired):

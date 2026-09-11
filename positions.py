@@ -22,6 +22,6 @@ def query_hold_positions(trade_ctx, max_seconds=QUERY_MAX_SECONDS):
         logger.error(f"position_list_query, ret_code: {ret_code}, error: {hold_all}")
         if time.monotonic() + QUERY_RETRY_INTERVAL >= deadline:
             raise Exception(
-                f"Failed to query positions after {attempts} attempts within {max_seconds:g}s"
+                f"Failed to query positions after {attempts} attempts within {max_seconds:g}s: {hold_all}"
             )
         time.sleep(QUERY_RETRY_INTERVAL)

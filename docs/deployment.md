@@ -17,11 +17,12 @@ flowchart LR
     Browser[局域网浏览器] -->|192.168.10.1:18080| App
     Laptop[获准的 Tailscale 笔记本] -->|Tailscale IP:18080| App
     App -->|127.0.0.1:11111| OpenD[网关上手动启动并登录的 Futu OpenD]
+    LANClient[局域网 SDK / GUI 客户端] -->|192.168.10.1:11111| OpenD
 ```
 
 默认每轮更新任务结束后等待 60 秒再检查；部署延迟包含轮询、依赖准备和启动检查时间。自动部署只由远端 master 的提交变化触发，本地编辑和未 push 的提交不触发。
 
-OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:11111`。确认 OpenD 监听回环地址，不向 LAN/WAN 开放 `11111`。浏览器只访问 Web 的 `18080` 端口。
+OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:11111`。OpenD 监听 `0.0.0.0:11111`，防火墙允许本机以及 `enp9s0f0np0` 上来自 `192.168.10.0/24`、目标为 `192.168.10.1` 的 TCP 11111 请求，其他非回环访问丢弃。局域网 SDK / GUI 客户端连接 `192.168.10.1:11111`；浏览器访问 Web 的 `18080` 端口。配置和验证记录见第 12 节。
 
 暂不引入 Docker、反向代理和常驻 CI runner。若以后需要域名、HTTPS、登录认证或更低的切换中断，再扩展反向代理层。
 
@@ -31,7 +32,7 @@ OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:1
 | --- | --- |
 | `opdash_web.py` 在 `main()` 中创建后端和 FastAPI app | 直接执行 Python 入口；单进程，不使用 reload 或多个 worker，避免重复行情连接与轮询 |
 | `--host` / `--port` 是 OpenD，`--web_host` / `--web_port` 是 HTTP | 两组配置分开，HTTP 绑定 `0.0.0.0:18080`，由防火墙限定 LAN 和指定 Tailscale 设备 |
-| `backend.start()` 在 HTTP 监听之前执行 | 启动检查设置明确期限，初始建议 120 秒，依据实际 OpenD 响应耗时调整 |
+| Web 先启动 HTTP，再在后台连接 OpenD 和加载数据 | 连接或查询失败时页面仍能显示原因；`/readyz` 保持 503，发布检查期限为 120 秒 |
 | `/healthz` 返回存活状态和发布 SHA，`/readyz` 返回数据就绪状态 | 部署时同时校验存活、目标版本和数据成功刷新 |
 | Web 自动发现模式允许启动时空仓，成功轮询为空会清空旧面板 | 空仓也能就绪，后续持仓变化自动发现；GUI 初始解析保留原行为 |
 | 所有 OpenD 端口共享一个 `--host`，最多两个端口 | 配置必须符合此限制；不同主机的 OpenD 不在本次直接支持范围 |
@@ -90,9 +91,9 @@ PROFIT_HIGHLIGHT_THRESHOLD=80
 
 此命令省略股票参数，Web 会自动发现期权标的；成功查询为空时也能启动。启动程序支持可选的 `STOCK_CODES`，使用参数数组传递。
 
-服务启用开机启动，使用 `Restart=on-failure`、`RestartSec=15s`，设置合理停止超时。固定启动程序在运行 Python 入口前，每 5 秒检查 `127.0.0.1:11111` 是否接受连接，未启动时保持可中断的等待并限频记录日志；不让服务因等待人工启动而耗尽重试次数。端口打开仅代表 TCP 可连接，登录/查询状态另行判断。应用启动失败后由 systemd 继续限速重试，可使用 `StartLimitIntervalSec=0` 配合上述重试间隔，避免因 OpenD 未就绪而永久停止重试。`network-online.target` 只提供启动顺序，不能保证 OpenD 已登录。
+服务启用开机启动，使用 `Restart=on-failure`、`RestartSec=15s`，设置合理停止超时。固定启动程序直接执行 Web，不再等待 OpenD TCP 端口；Web 在后台线程中连接 OpenD，并让 HTTP 页面立即可用。初始化抛错后每 5 秒重试；SDK 自身的连接重试也在后台进行，其握手错误会显示到页面。端口打开仅代表 TCP 可连接，登录/查询状态另行判断。`/healthz` 检查 HTTP 存活，`/readyz` 要求初始化完成、数据新鲜且没有当前 OpenD 错误。应用进程退出后由 systemd 限速重启。`network-online.target` 只提供启动顺序，不能保证 OpenD 已登录。
 
-网关重启后的顺序为：systemd 启动 Web 的等待程序 → 用户手动启动并登录 OpenD → Web 自动启动并连接 OpenD。OpenD 不纳入自动部署或自动启动管理，Web 不对 OpenD unit 设置自动启动依赖，保留手动启动 OpenD 的顺序。当前应用在后端初始化之前不监听 HTTP，因此等待期间浏览器暂时无法访问仪表盘；若以后希望显示等待页面，需要调整应用启动生命周期。
+网关重启后的顺序为：systemd 启动 Web 页面并在后台等待连接 → 用户手动启动并登录 OpenD → Web 自动连接并加载数据。OpenD 不纳入自动部署或自动启动管理，Web 不对 OpenD unit 设置自动启动依赖，保留手动启动 OpenD 的顺序。等待期间浏览器可查看连接状态、失败原因及处理建议。
 
 Web 限制为单核 CPU、1 GiB 内存；构建限制为单核 CPU、2 GiB 内存并降低 IO/CPU 调度优先级。版本保留与清理限制持续占盘；当前可用磁盘约 717 GiB。应用绑定所有 IPv4 地址，在独立防火墙 INPUT 链仅放行回环、指定 LAN 接口/网段，以及指定 Tailscale 设备到网关 Tailscale IP 的 HTTP 请求；其他接口/来源访问该端口一律丢弃。防火墙服务是 Web 的启动前置依赖。保留现有转发、NAT 和管理规则。
 
@@ -172,7 +173,7 @@ sudo systemctl disable --now opdash-deploy.timer
 
 ## 8. OpenD 安装与登录
 
-使用富途官方 Ubuntu 包中的命令行版 `10.10.7008`，安装于 `/opt/futu-opend/10.10.7008`，以 `futu-opend` 系统用户运行。API 仅监听 `127.0.0.1:11111`，Telnet/WebSocket 未启用。二进制和 XML 配置由 root 管理，SDK 自带的登录状态保存在该用户的私有 home `/var/lib/futu-opend`（0700）。`/etc/futu-opend/account.env` 只保存登录账号，权限 0640，组为 futu-opend；密码通过首次交互登录输入并由 OpenD 的“记住密码”功能保存，不进入仓库或进程参数。
+使用富途官方 Ubuntu 包中的命令行版 `10.10.7008`，安装于 `/opt/futu-opend/10.10.7008`，以 `futu-opend` 系统用户运行。API 监听 `0.0.0.0:11111`，由防火墙限定本机及指定局域网访问，Telnet/WebSocket 未启用。二进制和 XML 配置由 root 管理，SDK 自带的登录状态保存在该用户的私有 home `/var/lib/futu-opend`（0700）。`/etc/futu-opend/account.env` 只保存登录账号，权限 0640，组为 futu-opend；密码通过首次交互登录输入并由 OpenD 的“记住密码”功能保存，不进入仓库或进程参数。
 
 新版首次登录可能要求短信验证码，由账户所有者完成。首次登录命令（先停止已有实例）：
 
@@ -210,7 +211,7 @@ sudo -u opdash-deploy -H python3 /usr/local/libexec/opdash/deploy.py update --re
 
 Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更新不会自动覆盖它们；修改这些基础设施文件后，需要管理员重新执行经检查的安装脚本。应用、依赖锁定文件和前端资源会跟随 master 自动发布。
 
-验证命令：`python -m unittest discover -s tests -v`；Web 测试需要先安装 Web 依赖。防火墙由独立 `inet opdash_guard` 表约束 18080 的 LAN 接口/网段和指定 Tailscale 设备，并限制 11111 的本机访问；另通过现有 UFW 放行相同范围的 HTTP 流量；不修改网关 NAT、转发及其他服务规则。
+验证命令：`python -m unittest discover -s tests -v`；Web 测试需要先安装 Web 依赖。防火墙由独立 `inet opdash_guard` 表约束 18080 的 LAN 接口/网段和指定 Tailscale 设备，并将 11111 限制为本机及指定 LAN 接口/网段；另通过现有 UFW 放行相应的 HTTP 和 LAN OpenD 流量；不修改网关 NAT、转发及其他服务规则。
 
 
 ## 10. 实机验收记录（2026-09-12）
@@ -219,7 +220,7 @@ Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更�
 - HTTP 冒烟检查通过：首页、健康接口、快照及本地 JS/CSS/Plotly 文件均能正常响应。
 - OpenD 完成短信设备验证，并已验证切换到 systemd 后使用记住密码正常登录；未保存明文密码到仓库或启动参数。
 - 首个成功版本 `846d5a8`；LAN 请求 `/healthz`、`/readyz` 返回 200，真实持仓与标的价格就绪。
-- OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止；首次部署时 Web 仅绑定 LAN 地址，后续 Tailscale 配置见下节。
+- 首次部署时 OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止，Web 仅绑定 LAN 地址；后续 Tailscale 配置见第 11 节，OpenD 局域网开放见第 12 节。
 - 服务开机配置：Web、部署 timer、防火墙已 enable；OpenD 仍为手动 start，符合原启动约定。
 
 - 已验证真实 `master` 更新：推送 `1f67d58` 后，timer 自动完成独立版本构建与切换；无更新时 Web PID 保持不变。
@@ -238,10 +239,77 @@ Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更�
 http://<网关的 Tailscale IPv4>:18080
 ```
 
-无需 SSH 隧道、子网路由、出口节点或 Tailscale Serve。服务仍为单个 Web 进程，绑定 `0.0.0.0:18080`。管理员在网关本地 `/etc/opdash/firewall.nft` 中，仅放行 `tailscale0` 上来自指定笔记本 IP、目标为网关 Tailscale IP 的 TCP 18080 请求，并在现有 UFW 配置中添加同范围规则。其他 Tailscale 设备不自动获得访问权。OpenD 保持 `127.0.0.1:11111`，不会经 Tailscale 开放。
+无需 SSH 隧道、子网路由、出口节点或 Tailscale Serve。服务仍为单个 Web 进程，绑定 `0.0.0.0:18080`。管理员在网关本地 `/etc/opdash/firewall.nft` 中，仅放行 `tailscale0` 上来自指定笔记本 IP、目标为网关 Tailscale IP 的 TCP 18080 请求，并在现有 UFW 配置中添加同范围规则。其他 Tailscale 设备不自动获得访问权。OpenD 的 TCP 11111 允许本机和指定局域网访问，不经 Tailscale 开放。
 
-具体设备地址及其防火墙白名单仅保存在主机本地，不提交到公开仓库。仓库中的默认防火墙仅放行 LAN；安装器会保留已有 `/etc/opdash/firewall.nft`，防止后续安装覆盖主机上的设备白名单。修改默认模板不会自动改变已有安装的规则，已有主机需要管理员审阅并更新本地文件。
+具体设备地址及其防火墙白名单仅保存在主机本地，不提交到公开仓库。仓库中的默认防火墙仅对 LAN 开放 Web 18080，OpenD 11111 默认只允许本机；当前网关的 OpenD LAN 规则是第 12 节记录的主机本地配置。安装器会保留已有 `/etc/opdash/firewall.nft`，防止后续安装覆盖主机上的设备白名单和 OpenD LAN 规则。修改默认模板不会自动改变已有安装的规则，已有主机需要管理员审阅并更新本地文件。
 
 若换用另一台笔记本，先在 `tailscale status` 中确认其属于同一账号，再更新主机本地 nft/UFW 规则中的客户端 IP。tailnet 的 ACL/grants 还必须允许该笔记本连接网关 TCP 18080。
 
 既有安装的 `/etc/opdash/opdash.env` 需要明确设置 `WEB_HOST=0.0.0.0` 和 `WEB_CHECK_HOST=127.0.0.1`；安装器保留已有环境配置，不自动覆盖。先应用收窄来源的防火墙，再修改监听并重启 Web。此次已按此顺序应用，且从网关本机验证回环、LAN IP、Tailscale IP 的 `/readyz` 均返回成功；端到端验证需笔记本在线。
+
+
+## 12. OpenD 局域网访问（2026-09-12）
+
+已按要求将 `192.168.10.1:11111` 对 `192.168.10.0/24` 局域网开放。网关上的 Web 继续使用 `127.0.0.1:11111`；局域网 GUI 客户端可使用：
+
+```bash
+python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
+```
+
+持久配置如下：
+
+- `/etc/futu-opend/FutuOpenD.xml` 的 `<ip>` 为 `0.0.0.0`，`<api_port>` 为 `11111`。
+- `/etc/opdash/firewall.nft` 的 `inet opdash_guard` / `input` 链中，以下两条规则按顺序保留；第一条允许指定 LAN 流量，第二条丢弃其他非回环流量。现有 Web 和 Tailscale 规则保留。
+
+```nft
+tcp dport 11111 iifname "enp9s0f0np0" ip saddr 192.168.10.0/24 ip daddr 192.168.10.1 accept
+tcp dport 11111 iifname != "lo" counter drop
+```
+
+UFW 同时增加了以下规则：
+
+```bash
+sudo ufw allow in on enp9s0f0np0 from 192.168.10.0/24 to 192.168.10.1 port 11111 proto tcp comment 'OpenD LAN'
+```
+
+实施时先通过 `nft -c -f` 检查候选规则，备份原配置，再应用 nft/UFW 规则，修改 OpenD 监听地址并重启 `futu-opend.service`。原 `firewall.nft` 和 `FutuOpenD.xml` 备份位于网关 `/etc/opdash/backups/lan-11111-20260912-020326-992292/`。OpenD 开机后手动启动的设置保留。
+
+端口开放时的验证结果：从当前局域网客户端执行 `nc -vz -G 5 192.168.10.1 11111` 连接成功；网关 `ss` 显示 OpenD 监听 `0.0.0.0:11111`；OpenD、Web、防火墙服务均为 active；`http://127.0.0.1:18080/readyz` 返回 200，`ok`、`positions_ok`、`prices_ok` 均为 true。此阶段只覆盖 LAN TCP 连通性和网关仪表盘数据就绪，未覆盖远程 SDK 查询；后续持仓查询暴露的加密要求已按第 13 节处理，上面的客户端命令已更新为加密连接方式。
+
+
+## 13. OpenD 协议加密（2026-09-12）
+
+局域网直连持仓查询曾返回 `cross-network trade connections must be encrypted`。TCP 端口可达并不代表交易接口可用：持仓查询也属于交易接口，需要启用 OpenD 协议加密。OpenD 和 SDK 客户端使用同一份 RSA 私钥，初始化连接后使用协商的 AES 密钥传输请求和响应。官方说明：[协议加密配置](https://openapi.futunn.com/futu-api-doc/qa/other.html)、[协议流程](https://openapi.futunn.com/futu-api-doc/ftapi/protocol.html)、[Python SDK 设置](https://openapi.futunn.com/futu-api-doc/ftapi/init.html)。
+
+已在本机生成 SDK 要求的 1024 位 PKCS#1 RSA 私钥，通过 SSH 传到网关。私钥文件不进入 Git：
+
+- 本机：`.secrets/futu-opend-rsa.pem`，目录权限 0700、文件权限 0600。
+- 网关：`/etc/futu-opend/keys/opdash-rsa.pem`，目录权限 0750、文件权限 0640，属主 root、组 futu-api。futu-opend、opdash、opdash-deploy 加入该组，以供 OpenD、仪表盘及首次部署探针读取。
+- `/etc/futu-opend/FutuOpenD.xml` 增加 `<rsa_private_key>/etc/futu-opend/keys/opdash-rsa.pem</rsa_private_key>`。
+- `/etc/opdash/opdash.env` 增加 `FUTU_RSA_PRIVATE_KEY=/etc/futu-opend/keys/opdash-rsa.pem`；Web 的 OpenD 地址仍为 `127.0.0.1:11111`。
+
+GUI 和 Web 均新增 `--rsa_private_key` 参数，也支持 `FUTU_RSA_PRIVATE_KEY` 环境变量。显式参数优先；启动时先读取并校验私钥，再配置 SDK 加密，随后进行持仓自动发现。两个端口共用 SDK 的同一份私钥配置，因此对比两个 OpenD 实例时，两端必须配置相同的私钥。
+
+独立 Python SDK 程序应在创建任何行情或交易连接之前执行：
+
+```python
+from futu import SysConfig
+
+SysConfig.set_init_rsa_file("/absolute/path/to/futu-opend-rsa.pem")
+SysConfig.enable_proto_encrypt(True)
+```
+
+网关的 `/usr/local/libexec/opdash/start.py` 已更新：设置私钥环境变量后，在发布版本的 venv 中先配置 SDK 加密，再运行 Web 入口；该方式兼容尚未支持新参数的保留版本，回滚应用版本后仍能连接已加密的 OpenD。`deploy.py` 的首次部署登录探针同步支持私钥配置。启用加密时先备份 OpenD XML、环境文件及两个启动/部署脚本，再在部署锁保护下更新配置、重启 OpenD 和 Web。备份位于 `/etc/opdash/backups/rsa-20260912-022508/`。
+
+加密验收：从当前这台电脑通过 `192.168.10.1:11111` 建立加密行情连接，`get_global_state` 成功且行情已登录；通过加密交易连接执行 `position_list_query(refresh_cache=True)` 返回 `RET_OK`。未输出账户或持仓详情，未执行下单或解锁交易。重启后的网关仪表盘 `/readyz` 返回成功，持仓与行情均就绪。24 项测试通过，包含私钥校验、参数优先级、首次部署探针和旧版本启动加密兼容。
+
+
+## 14. 页面显示 OpenD 错误
+
+页面顶部新增 OpenD 状态区。连接拒绝、超时、`check sha error`、跨网络连接未加密、私钥无法读取，以及持仓/行情查询失败时，展示 OpenD 地址、失败阶段、原始错误、最近发生时间和处理建议。错误内容按纯文本渲染并限制长度，密码、令牌和私钥正文会脱敏；页面不展示完整日志或调用栈。
+
+Web 的初始化和持仓自动发现移到后台；即使 SDK 一直重试握手，首页和 `/api/snapshot` 仍可用。运行期间查询失败会保留上次成功数据，状态区明确提示图表可能是旧数据。相同端口、相同阶段成功后清除该错误；某一端口恢复不会清除另一端口的错误。没有具体错误但数据过期时显示未就绪提示；浏览器刷新 API 失败也会显示提示并继续重试。
+
+`/api/snapshot` 新增 `opend` 字段，状态为 `starting`、`error`、`stale` 或 `ready`。错误和恢复状态独立于图表版本更新，因此无需持仓或价格变化就能显示。`/readyz` 在初始化未完成、数据过期或存在当前错误时返回 503。
+
+验证：33 项测试通过，覆盖初始化卡住时 HTTP 可用、具体 SDK 错误保留、分端口恢复、失败时保留旧数据、私钥错误、空仓和初始多端口发现。真实 Web 入口连接未监听的本机端口时，HTTP 正常响应并显示连接错误，进程可正常终止。Chrome 使用模拟握手失败验证了顶部错误区及恢复后自动隐藏。

@@ -920,8 +920,10 @@ function formatLoadedTime(iso) {
 }
 
 async function refresh() {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 10000);
   try {
-    const resp = await fetch("/api/snapshot", { cache: "no-store" });
+    const resp = await fetch("/api/snapshot", { cache: "no-store", signal: controller.signal });
     if (!resp.ok) {
       throw new Error(`HTTP ${resp.status}`);
     }
@@ -931,6 +933,7 @@ async function refresh() {
     updateHeader(snapshot);
     updateLegend(snapshot.profit_highlight_threshold);
     updateServerSettings(snapshot);
+    updateOpenDStatus(snapshot.opend);
 
     // 标的可在运行时增减（auto 模式），版本号变化时整块重建网格
     const stockCodesVersion = snapshot.versions?.stock_codes ?? 0;
@@ -947,9 +950,66 @@ async function refresh() {
   } catch (err) {
     const status = document.getElementById("status");
     status.textContent = `refresh failed: ${err}`;
+    updateOpenDStatus({ state: "unreachable", message: String(err) });
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
+function updateOpenDStatus(connection) {
+  const banner = document.getElementById("opend-status");
+  if (!banner) return;
+  banner.replaceChildren();
+  banner.hidden = !connection || connection.state === "ready";
+  if (banner.hidden) return;
+  banner.dataset.state = connection.state;
+  const titles = {
+    error: "OpenD 访问失败",
+    starting: "正在连接 OpenD",
+    stale: "OpenD 数据尚未更新",
+    unreachable: "无法刷新仪表盘",
+  };
+  const title = document.createElement("h2");
+  title.textContent = titles[connection.state] || "OpenD 状态异常";
+  banner.append(title);
+  const summary = document.createElement("p");
+  summary.textContent = connection.state === "starting"
+    ? "正在连接并加载持仓、行情；连接失败时会在此显示原因，系统会自动重试。"
+    : "持仓或行情更新受影响，现有图表可能是旧数据。恢复后此提示会自动清除。";
+  banner.append(summary);
+  const scopes = { configuration: "加密配置", connection: "连接 / 握手", startup: "初始化", positions: "持仓 / 期权查询", prices: "行情查询" };
+  const errors = connection.errors || [];
+  if (errors.length) {
+    const list = document.createElement("ul");
+    errors.forEach((error) => {
+      const item = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = `${scopes[error.scope] || error.scope} · ${error.host}:${error.port ?? (connection.ports || []).join(",")}`;
+      const message = document.createElement("p");
+      message.className = "opend-error-message";
+      message.textContent = error.message;
+      const hint = document.createElement("p");
+      hint.textContent = error.hint;
+      const time = document.createElement("p");
+      time.className = "opend-error-time";
+      time.textContent = `最近发生：${new Date(error.occurred_at).toLocaleString()}`;
+      item.append(label, message, hint, time);
+      list.append(item);
+    });
+    banner.append(list);
+  } else if (connection.state === "stale") {
+    const details = document.createElement("p");
+    details.textContent = `OpenD ${connection.host}:${(connection.ports || []).join(",")} · 持仓：${connection.positions_ok ? "已更新" : "未就绪或已过期"} · 行情：${connection.prices_ok ? "已更新" : "未就绪或已过期"}`;
+    banner.append(details);
+  } else if (connection.message) {
+    const details = document.createElement("p");
+    details.textContent = connection.message;
+    banner.append(details);
+  }
+}
+
+// Retry even if the first snapshot request fails before a timer can be configured.
+ensureRefreshTimer({ ui_interval: 5 });
 refresh();
 
 window.addEventListener("keydown", (event) => {

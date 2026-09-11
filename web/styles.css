@@ -97,6 +97,32 @@ body {
   gap: 10px;
 }
 
+.opend-status {
+  margin: 0 0 16px;
+  padding: 14px 18px;
+  border: 1px solid #fca5a5;
+  border-left: 5px solid #dc2626;
+  border-radius: 8px;
+  color: #7f1d1d;
+  background: #fef2f2;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.opend-status[data-state="starting"],
+.opend-status[data-state="stale"] {
+  border-color: #fbbf24;
+  color: #78350f;
+  background: #fffbeb;
+}
+
+.opend-status h2 { margin: 0 0 4px; font-size: 17px; }
+.opend-status p { margin: 4px 0; }
+.opend-status ul { margin: 10px 0 0; padding-left: 20px; }
+.opend-status li + li { margin-top: 12px; }
+.opend-error-message { white-space: pre-wrap; font-family: monospace; font-size: 13px; }
+.opend-error-time { font-size: 12px; opacity: 0.85; }
+
 .card {
   position: relative;
   background: var(--card);

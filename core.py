@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 import re
 import sys
 import time
@@ -7,7 +9,7 @@ from contextlib import contextmanager
 
 import numpy as np
 from futu import (RET_OK, OpenQuoteContext, OpenSecTradeContext, OptionType,
-                  SecurityFirm, TrdMarket)
+                  SecurityFirm, SysConfig, TrdMarket)
 
 from options import OptionEnum
 from positions import query_hold_positions
@@ -73,6 +75,12 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
         help="futu server port(s), comma separated, max 2 (default: 11111)",
     )
     parser.add_argument(
+        "--rsa_private_key",
+        metavar="",
+        default=os.environ.get("FUTU_RSA_PRIVATE_KEY"),
+        help="RSA private key shared with OpenD; enables encryption (or set FUTU_RSA_PRIVATE_KEY)",
+    )
+    parser.add_argument(
         "--poll_interval",
         metavar="",
         type=int,
@@ -113,6 +121,23 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
             f"default: {DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD:g}"
         ),
     )
+
+
+def configure_futu_encryption(private_key=None):
+    """Configure SDK encryption before discovery or any context is created."""
+    if not private_key:
+        return
+    from Crypto.PublicKey import RSA
+
+    path = Path(private_key).expanduser().resolve()
+    try:
+        key = RSA.import_key(path.read_bytes())
+        if not key.has_private() or key.size_in_bits() != 1024:
+            raise ValueError("OpenD requires a 1024-bit RSA private key")
+    except (OSError, ValueError, IndexError, TypeError) as error:
+        raise ValueError(f"Cannot load OpenD RSA private key at {path}: {error}") from error
+    SysConfig.set_init_rsa_file(str(path))
+    SysConfig.enable_proto_encrypt(True)
 
 
 def set_profit_highlight_threshold(value):
@@ -1146,7 +1171,9 @@ def get_options_map(
         positions = _query_positions_with_log(
             trade_ctx, trade_lock, purpose=f"get_options_map:{','.join(stock_codes)}"
         )
-    stock_codes = parse_stock_codes_arg(stock_codes)
+    stock_codes = parse_stock_codes_arg(stock_codes, allow_empty=True)
+    if not stock_codes:
+        return {}
     option_items = _extract_option_positions_from_positions(positions)
     stock_alias_map = _build_position_stock_alias_map(positions, option_items)
     if quote_ctx is None or not option_items:

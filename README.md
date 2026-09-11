@@ -71,5 +71,13 @@ For full CLI arguments, more examples, runtime behavior, and troubleshooting, se
 
 ## Gateway deployment
 
-See [docs/deployment.md](docs/deployment.md) for the Ubuntu gateway setup, local OpenD,
+See [docs/deployment.md](docs/deployment.md) for the Ubuntu gateway setup, OpenD access from localhost and the LAN,
 automatic deployment of `origin/master`, health checks, and rollback commands.
+
+For encrypted OpenD access from the Osaka LAN, use the private key configured on the gateway:
+
+```bash
+python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
+```
+
+`opdash_web.py` supports the same flag. Keep the private key local; `.secrets/` is ignored by Git.

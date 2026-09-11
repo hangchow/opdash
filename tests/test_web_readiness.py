@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from backend import OptionDashboardBackend
 from core import resolve_stock_codes, TrdMarket
 from opdash_web import create_app
+from opend_status import OpenDStatus
 
 
 class ReadinessTests(unittest.TestCase):
@@ -17,6 +18,9 @@ class ReadinessTests(unittest.TestCase):
         b.stop_event = Event()
         b.stock_codes = ["US.AAPL", "US.TSLA"]
         b.ports = [11111]
+        b.host = '127.0.0.1'
+        b.status = OpenDStatus(b.host, b.ports)
+        b.initialized = True
         b.poll_interval = b.price_interval = 10
         self.now = datetime.now(timezone.utc).isoformat()
         b.options_done_at_by_port = {11111: self.now}

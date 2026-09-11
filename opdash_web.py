@@ -5,6 +5,8 @@ import math
 import os
 import sys
 from pathlib import Path
+from contextlib import asynccontextmanager
+from threading import Event, Thread
 
 import uvicorn
 from fastapi import FastAPI
@@ -22,6 +24,7 @@ from core import (
     bind_parser_error_handler,
     build_dashboard_header_data,
     build_server_settings,
+    configure_futu_encryption,
     format_option_position_count_text,
     format_server_settings_text,
     get_dashboard_title,
@@ -50,7 +53,9 @@ from core import (
     format_price_label,
     get_option_pl_labels,
     parse_ports_arg,
-    resolve_stock_codes,
+    parse_stock_codes_arg,
+    infer_trade_market_filter,
+    TrdMarket,
     safe_quote_ctx,
     safe_trade_ctx,
     set_profit_highlight_threshold,
@@ -90,6 +95,7 @@ def parse_args():
         # 留空表示由账户期权持仓自动发现，解析推迟到 main() 里做
         "stock_codes": args.stock_codes,
         "host": args.host,
+        "rsa_private_key": args.rsa_private_key,
         "ports": ports,
         "poll_interval": args.poll_interval,
         "price_interval": args.price_interval,
@@ -236,7 +242,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     price_version = state["price_version"]
     # 标的可能被轮询线程改写，统一取自同一份快照，避免面板与代码列表错位
     price_changes = state.get("price_changes", {})
-    stock_codes = state.get("stock_codes") or list(backend.stock_codes)
+    stock_codes = state["stock_codes"]
     stock_codes_version = state.get("stock_codes_version", 0)
 
     panels = []
@@ -300,6 +306,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     return {
         "generated_at": generated_at,
         "header": header,
+        "opend": backend.get_connection_status(),
         "stock_codes": stock_codes,
         "ports": backend.ports,
         "price_mode": backend.price_mode,
@@ -322,8 +329,45 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     }
 
 
-def create_app(backend, ui_interval, server_settings=None):
-    app = FastAPI(title=get_dashboard_title())
+def create_app(backend, ui_interval, server_settings=None, *, manage_backend=False,
+               rsa_private_key=None):
+    @asynccontextmanager
+    async def lifespan(app):
+        shutdown = Event()
+
+        def initialize():
+            from futu import SysConfig
+            # SDK constructors can retry indefinitely. Keep HTTP responsive and
+            # allow process shutdown even while a connection is unavailable.
+            SysConfig.set_all_thread_daemon(True)
+            while not shutdown.is_set():
+                try:
+                    with backend.status.operation('configuration'):
+                        configure_futu_encryption(rsa_private_key)
+                    backend.start()
+                    if not shutdown.is_set():
+                        backend.status.clear('startup', None)
+                    return
+                except Exception as error:
+                    if not backend.status.errors():
+                        backend.status.report('startup', None, error)
+                    logger.error('OpenD startup failed; retrying: %s', error)
+                    shutdown.wait(5)
+
+        if manage_backend:
+            backend.status.capture_logs()
+            worker = Thread(target=initialize, daemon=True, name='opend_startup')
+            worker.start()
+        try:
+            yield
+        finally:
+            if manage_backend:
+                shutdown.set()
+                backend.stop()
+                worker.join(timeout=1)
+                backend.status.detach()
+
+    app = FastAPI(title=get_dashboard_title(), lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
@@ -364,14 +408,10 @@ def main():
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
-    try:
-        stock_codes, trade_market_filter, auto_stock_codes = resolve_stock_codes(
-            args["stock_codes"], args["host"], args["ports"], logger_obj=logger,
-            allow_empty_auto=True,
-        )
-    except ValueError as e:
-        logger.error("%s", e)
-        sys.exit(1)
+    stock_codes = parse_stock_codes_arg(args['stock_codes'], allow_empty=True)
+    auto_stock_codes = not stock_codes
+    trade_market_filter = (TrdMarket.NONE if auto_stock_codes
+                           else infer_trade_market_filter(stock_codes))
     server_settings = build_server_settings(
         stock_codes=stock_codes,
         futu_host=args["host"],
@@ -416,8 +456,8 @@ def main():
     )
 
     try:
-        backend.start()
-        app = create_app(backend, args["ui_interval"], server_settings=server_settings)
+        app = create_app(backend, args["ui_interval"], server_settings=server_settings,
+                         manage_backend=True, rsa_private_key=args['rsa_private_key'])
         logger.info(
             "Web server listening at http://%s:%s",
             args["web_host"],
@@ -433,8 +473,6 @@ def main():
     except Exception as e:
         logger.error("error in web dashboard: %s", e)
         sys.exit(1)
-    finally:
-        backend.stop()
 
 
 if __name__ == "__main__":

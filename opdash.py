@@ -22,6 +22,7 @@ from core import (
     bind_parser_error_handler,
     build_dashboard_header_data,
     build_server_settings,
+    configure_futu_encryption,
     format_option_position_count_text,
     format_server_settings_text,
     get_profit_highlight_threshold,
@@ -86,6 +87,10 @@ def parse_args():
 
     args = parser.parse_args()
     ports = parse_ports_arg(args.port, parser, logger_obj=logger, max_ports=2)
+    try:
+        configure_futu_encryption(args.rsa_private_key)
+    except ValueError as error:
+        parser.error(str(error))
     return (
         # 留空表示由账户期权持仓自动发现，解析推迟到下面的启动流程里做
         args.stock_codes,

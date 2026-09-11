@@ -2,28 +2,29 @@
 """Root-installed launcher; all repository code runs as the opdash user."""
 import os
 from pathlib import Path
-import socket
-import time
+
+
+# Bootstrap in the release venv so retained releases also support encryption.
+# Their CLI may predate --rsa_private_key; configure the SDK before importing them.
+ENCRYPTED_BOOTSTRAP = """
+import os, runpy, sys
+from futu import SysConfig
+SysConfig.set_init_rsa_file(os.environ['FUTU_RSA_PRIVATE_KEY'])
+SysConfig.enable_proto_encrypt(True)
+script = sys.argv.pop(1)
+sys.argv[0] = script
+sys.path.insert(0, os.path.dirname(script))
+runpy.run_path(script, run_name='__main__')
+"""
 
 
 def main():
-    host = os.environ.get("FUTU_HOST", "127.0.0.1")
-    ports = [int(p) for p in os.environ.get("FUTU_PORTS", "11111").split(",")]
-    attempt = 0
-    while True:
-        try:
-            for port in ports:
-                with socket.create_connection((host, port), timeout=2):
-                    pass
-            break
-        except OSError:
-            if attempt % 12 == 0:
-                print("Waiting for local OpenD; retrying every 5 seconds", flush=True)
-            attempt += 1
-            time.sleep(5)
+    # The Web app owns background connection/retry so HTTP can report OpenD errors.
     release = Path("/opt/opdash/current").resolve(strict=True)
     os.environ["OPDASH_RELEASE"] = release.name
     args = [str(release / ".venv/bin/python"), "-u", str(release / "opdash_web.py")]
+    if os.environ.get("FUTU_RSA_PRIVATE_KEY"):
+        args[2:2] = ["-c", ENCRYPTED_BOOTSTRAP]
     if os.environ.get("STOCK_CODES"):
         args.append(os.environ["STOCK_CODES"])
     defaults = {
