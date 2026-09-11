@@ -1,3 +1,4 @@
+const PL_LABEL_GAP_PX = 5; // 标记边缘到盈亏文字的像素间距
 let initialized = false;
 let lastStockCodesVersion = null;
 let refreshTimer = null;
@@ -697,6 +698,8 @@ function renderPanel(id, panel) {
   const lineColors = options.map((o) => o.marker_line_color);
   const fillColors = options.map((o) => o.marker_fill_color);
   const hoverTexts = options.map((o) => o.hover_text);
+  const plLabels = options.map((o) => o.pl_label || "");
+  const plColors = options.map((o) => o.pl_color);
   const groupedHoverTexts = buildGroupedHoverTexts(options);
 
   const uniqueDates = Array.from(new Set(xVals)).sort();
@@ -740,6 +743,37 @@ function renderPanel(id, panel) {
 
   const shapes = [];
   const annotations = [];
+  // 盈亏标注用 annotation 而非 text trace：xshift 能按标记半径给出精确像素间距，
+  // 且 marker trace 的 text 字段已被悬停提示占用
+  options.forEach((option, index) => {
+    const label = plLabels[index];
+    if (!label) {
+      return;
+    }
+    const radius = Number(option.marker_size || 0) / 2;
+    const gap = radius + PL_LABEL_GAP_PX;
+    // 贴近右边界的点改标在左侧，否则文字会被面板裁掉
+    let onRightEdge = false;
+    if (xRange) {
+      const x0 = xRange[0].getTime();
+      const x1 = xRange[1].getTime();
+      const span = x1 - x0;
+      if (span > 0) {
+        onRightEdge = (new Date(xVals[index]).getTime() - x0) / span > 0.82;
+      }
+    }
+    annotations.push({
+      x: xVals[index],
+      y: yVals[index],
+      text: label,
+      showarrow: false,
+      xanchor: onRightEdge ? "right" : "left",
+      yanchor: "middle",
+      xshift: onRightEdge ? -gap : gap,
+      font: { size: 10, color: plColors[index] },
+      captureevents: false,
+    });
+  });
   if (panel.stock_price !== null && panel.stock_price !== undefined) {
     const y0 = Number(panel.stock_price.toFixed(2));
     shapes.push({
@@ -757,7 +791,11 @@ function renderPanel(id, panel) {
       y: y0,
       xanchor: isLeftColumn ? "left" : "right",
       yanchor: "middle",
-      text: y0.toFixed(2),
+      // 后端已按当前时段算好同源涨跌，缺数据时退化为纯价格
+      text:
+        typeof panel.stock_price_label === "string" && panel.stock_price_label
+          ? panel.stock_price_label
+          : y0.toFixed(2),
       showarrow: false,
       font: { color: "red", size: 11 },
       bgcolor: "#ffffff",

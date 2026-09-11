@@ -19,6 +19,9 @@ PROFIT_HIGHLIGHT_THRESHOLD = DEFAULT_PROFIT_HIGHLIGHT_THRESHOLD  # Highlight thr
 SHORT_POSITION_COLOR = (0.0, 0.6, 0.0, 1.0)    # Green: short
 LONG_POSITION_COLOR = (1.0, 0.41, 0.71, 1.0)   # Pink: long
 HOLLOW_FACE_COLOR = (0.0, 0.0, 0.0, 0.0)       # Hollow marker fill
+PL_PROFIT_COLOR = "#d32f2f"  # 盈利：红
+PL_LOSS_COLOR = "#17994a"    # 亏损：绿
+PL_FLAT_COLOR = "#8a9199"    # 持平：灰
 SIDE_SHORT = "SHORT"
 SIDE_LONG = "LONG"
 _last_profit_hit_codes = {}
@@ -29,6 +32,11 @@ US_OVERNIGHT_STATES = {"OVERNIGHT", "AFTER_HOURS_END"}
 DASHBOARD_TITLE = "Option Positions Dashboard"
 SNAPSHOT_MAX_ATTEMPTS = 3       # 单页行情快照的最大尝试次数（含首次）
 SNAPSHOT_RETRY_INTERVAL = 1.5   # 快照重试间隔秒数，对齐 futu level2 限频节奏
+_CHANGE_FIELDS_BY_PRICE_FIELD = {   # 价格字段 -> 同源的 (涨跌额, 涨跌幅) 字段
+    "pre_price": ("pre_change_val", "pre_change_rate"),
+    "after_price": ("after_change_val", "after_change_rate"),
+    "overnight_price": ("overnight_change_val", "overnight_change_rate"),
+}
 HK_NUMERIC_STOCK_CODE_RE = re.compile(r"^HK\.(\d{1,5})$", re.IGNORECASE)
 
 
@@ -415,6 +423,71 @@ def _fmt_quantity(value):
     return f"{num:.3f}".rstrip("0").rstrip(".")
 
 
+def format_price_label(price, change_val=None, change_rate=None):
+    # 红线标签：58.94(+0.39 +0.66%)；缺涨跌数据时退化为纯价格
+    price_num = _safe_float(price, None)
+    if price_num is None:
+        return ""
+    text = f"{price_num:.2f}"
+    val = _safe_float(change_val, None)
+    rate = _safe_float(change_rate, None)
+    if val is None or rate is None:
+        return text
+    return f"{text}({val:+.2f} {rate:+.2f}%)"
+
+
+def format_pl_label(pl_val):
+    # 标记点旁的持仓盈亏，格式与悬停提示里的 p/l 保持一致
+    num = _safe_float(pl_val, None)
+    if num is None:
+        return ""
+    return f"{num:+.2f}"
+
+
+def pl_label_color(pl_val):
+    # 红赚绿亏，与标记本身的多空配色相互独立
+    num = _safe_float(pl_val, None)
+    if num is None or num == 0:
+        return PL_FLAT_COLOR
+    return PL_PROFIT_COLOR if num > 0 else PL_LOSS_COLOR
+
+
+def _pl_point_key(option):
+    return (
+        _option_type_text(option.get("type")),
+        option.get("strike_date"),
+        _safe_float(option.get("strike_price"), None),
+    )
+
+
+def get_option_pl_labels(options):
+    # 同一 (类型, 行权日, 行权价) 上可能叠着多张合约，盈亏合并成一个标签；
+    # 返回与 options 等长的列表，重复点只有第一条带标签，避免文字叠字
+    totals = {}
+    for option in options or []:
+        key = _pl_point_key(option)
+        pl_val = _safe_float(option.get("pl_val"), None)
+        if pl_val is None:
+            totals.setdefault(key, None)
+        elif totals.get(key) is None:
+            totals[key] = pl_val
+        else:
+            totals[key] += pl_val
+    seen = set()
+    labels = []
+    for option in options or []:
+        key = _pl_point_key(option)
+        if key in seen:
+            labels.append({"text": "", "color": PL_FLAT_COLOR})
+            continue
+        seen.add(key)
+        total = totals.get(key)
+        labels.append(
+            {"text": format_pl_label(total), "color": pl_label_color(total)}
+        )
+    return labels
+
+
 def _fmt_percent(value):
     num = _safe_float(value, None)
     if num is None:
@@ -474,11 +547,33 @@ def _price_fields_by_mode(price_mode, market_state=None):
 
 
 def _pick_price_from_snapshot(data, fields):
+    field, price = _pick_price_field_from_snapshot(data, fields)
+    return price
+
+
+def _pick_price_field_from_snapshot(data, fields):
+    # 同时返回取值字段名，便于选出与该价格同源的涨跌字段
     for field in fields:
         price = _safe_float(data.get(field), None)
         if price is not None and price > 0:
-            return price
-    return None
+            return field, price
+    return None, None
+
+
+def _pick_change_from_snapshot(data, price_field, price):
+    # 涨跌必须与价格同源：盘前价配 pre_change_*，夜盘价配 overnight_change_*，
+    # 常规时段快照没有现成字段，用 last_price 与 prev_close_price 现算
+    change_fields = _CHANGE_FIELDS_BY_PRICE_FIELD.get(price_field)
+    if change_fields:
+        change_val = _safe_float(data.get(change_fields[0]), None)
+        change_rate = _safe_float(data.get(change_fields[1]), None)
+        if change_val is not None and change_rate is not None:
+            return change_val, change_rate
+        return None, None
+    prev_close = _safe_float(data.get("prev_close_price"), None)
+    if price is None or prev_close is None or prev_close <= 0:
+        return None, None
+    return price - prev_close, (price / prev_close - 1) * 100
 
 
 @contextmanager
@@ -1132,14 +1227,15 @@ def _get_us_market_state(quote_ctx, quote_lock=None):
 def _get_stock_prices_from_snapshot_batch(
     quote_ctx, stock_codes, price_mode="implied", market_state=None, quote_lock=None
 ):
-    # 批量从正股快照读取价格字段（last/pre/after/overnight）
+    # 批量从正股快照读取价格字段（last/pre/after/overnight）及同源涨跌
     prices = {}
+    changes = {}
     unique_codes = list(dict.fromkeys(code for code in stock_codes if code))
     if not unique_codes:
-        return prices
+        return prices, changes
     fields = _price_fields_by_mode(price_mode, market_state=market_state)
     if not fields:
-        return prices
+        return prices, changes
     t0 = time.perf_counter()
     logger.debug(
         f"get_market_snapshot stock prices start: codes={len(unique_codes)}, "
@@ -1160,28 +1256,33 @@ def _get_stock_prices_from_snapshot_batch(
             code = data.get("code")
             if not code:
                 continue
-            price = _pick_price_from_snapshot(data, fields)
+            price_field, price = _pick_price_field_from_snapshot(data, fields)
             if price is None:
                 continue
             prices[code] = price
+            change_val, change_rate = _pick_change_from_snapshot(data, price_field, price)
+            if change_val is not None and change_rate is not None:
+                changes[code] = {"change_val": change_val, "change_rate": change_rate}
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.debug(
         f"get_market_snapshot stock prices done: codes={len(unique_codes)}, "
         f"matched={len(prices)}, cost={elapsed_ms:.1f}ms"
     )
-    return prices
+    return prices, changes
 
 
 def _get_stock_prices_with_fallback(
     quote_ctx, stock_codes, option_code_snapshot, price_mode="implied", quote_lock=None
 ):
     # 先取正股快照（支持盘前/盘后字段），缺失时回退到期权 implied 价格
+    # 返回 (prices, changes)；implied 回退路径推不出涨跌，changes 里不会有该标的
     prices = {}
+    changes = {}
     if price_mode != "implied":
         market_state = None
         if price_mode == "auto":
             market_state = _get_us_market_state(quote_ctx, quote_lock=quote_lock)
-        prices = _get_stock_prices_from_snapshot_batch(
+        prices, changes = _get_stock_prices_from_snapshot_batch(
             quote_ctx,
             stock_codes,
             price_mode=price_mode,
@@ -1190,14 +1291,14 @@ def _get_stock_prices_with_fallback(
         )
     missing_codes = [code for code in stock_codes if code not in prices]
     if not missing_codes:
-        return prices
+        return prices, changes
     missing_option_snapshot = {
         stock_code: option_code_snapshot.get(stock_code)
         for stock_code in missing_codes
         if option_code_snapshot.get(stock_code)
     }
     if not missing_option_snapshot:
-        return prices
+        return prices, changes
     implied_prices = _get_stock_prices_from_options_batch(
         quote_ctx, missing_option_snapshot, quote_lock=quote_lock
     )
@@ -1207,7 +1308,7 @@ def _get_stock_prices_with_fallback(
             f"missing={len(missing_codes)}, recovered={len(implied_prices)}"
         )
         prices.update(implied_prices)
-    return prices
+    return prices, changes
 
 
 def _get_option_quotes_batch(quote_ctx, option_codes, quote_lock=None):

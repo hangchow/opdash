@@ -87,6 +87,7 @@ class OptionDashboardBackend:
         self.exit_stack = None
 
         self.latest_prices = {}
+        self.latest_price_changes = {}
         self.latest_options = {}
         self.latest_options_sig = {}
         self.latest_hover_sig = {}
@@ -185,7 +186,7 @@ class OptionDashboardBackend:
             price_source_port = self.ports[0]
             price_quote_ctx = self.quote_ctxs[price_source_port]
             price_quote_lock = self.quote_locks[price_source_port]
-            initial_prices = self.get_stock_prices_with_fallback(
+            initial_prices, initial_price_changes = self.get_stock_prices_with_fallback(
                 price_quote_ctx,
                 self.stock_codes,
                 initial_price_option_codes,
@@ -198,6 +199,7 @@ class OptionDashboardBackend:
 
             with self.price_lock:
                 self.latest_prices = dict(initial_prices)
+                self.latest_price_changes = dict(initial_price_changes)
                 self.price_done_at = initial_price_done_at
             with self.options_lock:
                 self.latest_options = dict(initial_options_by_panel)
@@ -324,6 +326,7 @@ class OptionDashboardBackend:
     def get_state_snapshot(self):
         with self.price_lock:
             prices_snapshot = dict(self.latest_prices)
+            price_changes_snapshot = dict(self.latest_price_changes)
             price_done_at_snapshot = self.price_done_at
         with self.options_lock:
             options_snapshot = {
@@ -344,6 +347,7 @@ class OptionDashboardBackend:
             "stock_codes": stock_codes_snapshot,
             "stock_codes_version": stock_codes_version,
             "prices": prices_snapshot,
+            "price_changes": price_changes_snapshot,
             "price_done_at": price_done_at_snapshot,
             "options": options_snapshot,
             "options_sig": options_sig_snapshot,
@@ -367,7 +371,7 @@ class OptionDashboardBackend:
                         for stock_code, option_code in self.latest_price_option_code.items()
                         if option_code
                     }
-                prices = self.get_stock_prices_with_fallback(
+                prices, price_changes = self.get_stock_prices_with_fallback(
                     quote_ctx,
                     self.stock_codes,
                     option_code_snapshot,
@@ -378,6 +382,7 @@ class OptionDashboardBackend:
                     price_done_at = datetime.now(timezone.utc).isoformat()
                     with self.price_lock:
                         self.latest_prices.update(prices)
+                        self.latest_price_changes.update(price_changes)
                         self.price_done_at = price_done_at
                     with self.version_lock:
                         self.price_version += 1

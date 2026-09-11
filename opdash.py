@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import logging
+import math
 import sys
 import textwrap
 
@@ -44,6 +45,8 @@ from core import (
     get_options_short_value_sums,
     get_stock_share_delta_map,
     _extract_option_stock_codes_from_positions,
+    format_price_label,
+    get_option_pl_labels,
     parse_ports_arg,
     resolve_stock_codes,
     safe_quote_ctx,
@@ -51,6 +54,8 @@ from core import (
     set_profit_highlight_threshold,
 )
 from options import OptionEnum
+
+PL_LABEL_GAP_POINTS = 4.0  # 标记边缘到盈亏文字的间距（点）
 
 logger = logging.getLogger("opdash")  # 固定日志名，避免显示为 __main__
 
@@ -132,8 +137,11 @@ def _compute_plot_data(options):
     call_s = []
     call_edgecolors = []
     call_facecolors = []
+    put_labels = []
+    call_labels = []
     threshold = get_profit_highlight_threshold()
-    for option in options:
+    pl_labels = get_option_pl_labels(options)
+    for label_index, option in enumerate(options):
         count = abs(int(option.get("count", 1)))
         size = 40 + max(0, count - 1) * 20
         strike_dt = datetime.datetime.strptime(option["strike_date"], "%y%m%d")
@@ -148,12 +156,14 @@ def _compute_plot_data(options):
             put_s.append(size)
             put_edgecolors.append(edge_color)
             put_facecolors.append(face_color)
+            put_labels.append(pl_labels[label_index])
         else:
             call_x.append(strike_dt)
             call_y.append(option["strike_price"])
             call_s.append(size)
             call_edgecolors.append(edge_color)
             call_facecolors.append(face_color)
+            call_labels.append(pl_labels[label_index])
     point_counts = _point_counts_from_options(options)
     unique_dates = sorted(set(call_x + put_x))
     y_all = [option["strike_price"] for option in options]
@@ -163,11 +173,13 @@ def _compute_plot_data(options):
         "call_s": call_s,
         "call_edgecolors": call_edgecolors,
         "call_facecolors": call_facecolors,
+        "call_labels": call_labels,
         "put_x": put_x,
         "put_y": put_y,
         "put_s": put_s,
         "put_edgecolors": put_edgecolors,
         "put_facecolors": put_facecolors,
+        "put_labels": put_labels,
         "point_counts": point_counts,
         "unique_dates": unique_dates,
         "y_all": y_all,
@@ -605,6 +617,7 @@ def plot_chart(
     chart_title=None,
     show_y_label=True,
     y_ticks_on_right=False,
+    price_change=None,
 ):
     # 初始化绘图：散点 + 悬停 + 基准线
     plot_data = _compute_plot_data(options)
@@ -654,14 +667,61 @@ def plot_chart(
             stock_share_count=stock_share_count,
         ),
         "y_bounds_key": _strike_bounds_key(plot_data["y_all"]),
+        "pl_labels": _draw_pl_labels(ax, plot_data),
     }
     state["hover_cids"] = _bind_option_hover(ax.figure, ax, state)
 
     base_line, base_text = (None, None)
     if stock_price is not None:
         logger.info(f"chart {stock_code} init base line at y={stock_price}")
-        base_line, base_text = draw_base_line(ax, plot_data["y_all"], stock_price)
+        change = price_change or {}
+        base_line, base_text = draw_base_line(
+            ax,
+            plot_data["y_all"],
+            stock_price,
+            change.get("change_val"),
+            change.get("change_rate"),
+        )
     return base_line, base_text, state
+
+
+def _draw_pl_labels(ax, plot_data, existing=None):
+    # 在每个标记点右侧标注持仓盈亏；点数会随持仓变化，这里整体重建
+    for artist in existing or []:
+        artist.remove()
+    artists = []
+    groups = (
+        ("call_x", "call_y", "call_labels", "call_s"),
+        ("put_x", "put_y", "put_labels", "put_s"),
+    )
+    x_min, x_max = ax.get_xlim()
+    x_span = x_max - x_min
+    for x_key, y_key, label_key, size_key in groups:
+        for x, y, label, size in zip(
+            plot_data[x_key], plot_data[y_key], plot_data[label_key], plot_data[size_key]
+        ):
+            if not label["text"]:
+                continue
+            # scatter 的 s 是点面积，换算成半径后再留间距，标记变大时不会被压住
+            radius_pt = math.sqrt(max(size, 1.0) / math.pi)
+            gap = radius_pt + PL_LABEL_GAP_POINTS
+            # 贴近右边界的点改标在左侧，否则文字会被面板裁掉
+            x_frac = (mdates.date2num(x) - x_min) / x_span if x_span else 0.0
+            on_right_edge = x_frac > 0.82
+            artists.append(
+                ax.annotate(
+                    label["text"],
+                    (x, y),
+                    textcoords="offset points",
+                    xytext=(-gap, 0) if on_right_edge else (gap, 0),
+                    ha="right" if on_right_edge else "left",
+                    va="center",
+                    fontsize=7,
+                    color=label["color"],
+                    clip_on=True,
+                )
+            )
+    return artists
 
 
 def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
@@ -712,6 +772,8 @@ def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
         else:
             _maybe_expand_panel_y_range_for_price(ax, y_all, stock_price)
     state["y_bounds_key"] = y_bounds_key
+    # 坐标范围定下来之后再画标注，右边界判断才准
+    state["pl_labels"] = _draw_pl_labels(ax, plot_data, state.get("pl_labels"))
     _update_position_count_text(
         state.get("count_text"),
         options,
@@ -719,7 +781,7 @@ def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
     )
 
 
-def draw_base_line(ax, y, price):
+def draw_base_line(ax, y, price, change_val=None, change_rate=None):
     # 绘制当前股价基准线
     label_x, label_ha = _base_price_label_anchor(ax)
     base_y = round(price, 2)
@@ -727,7 +789,7 @@ def draw_base_line(ax, y, price):
     text = ax.text(
         label_x,
         base_y,
-        f"{base_y:.2f}",
+        format_price_label(base_y, change_val, change_rate),
         color='red',
         fontsize=10,
         ha=label_ha,
@@ -757,17 +819,19 @@ def _base_price_text_transform(ax):
     )
 
 
-def move_base_line(ax, line, text, new_y):
+def move_base_line(ax, line, text, new_y, change_val=None, change_rate=None):
     label_x, label_ha = _base_price_label_anchor(ax)
     new_y_round = round(new_y, 2)
+    new_label = format_price_label(new_y_round, change_val, change_rate)
     curr_y = line.get_ydata()[0]
-    if round(curr_y, 2) == new_y_round:
+    # 价格未动但涨跌变了（例如跨时段换了基准）也要刷新标签
+    if round(curr_y, 2) == new_y_round and text.get_text() == new_label:
         return False
     line.set_ydata([new_y_round, new_y_round])
     text.set_position((label_x, new_y_round))
     text.set_ha(label_ha)
     text.set_transform(_base_price_text_transform(ax))
-    text.set_text(f"{new_y_round:.2f}")
+    text.set_text(new_label)
     return True
 
 
@@ -955,6 +1019,7 @@ if __name__ == "__main__":
             panel_stock_codes = list(panel_stock_codes)
             options_by_panel = state["options"]
             prices = state["prices"]
+            price_changes = state.get("price_changes", {})
             delta_sum_by_panel = state.get("delta_sum_by_panel", {})
             stock_shares_by_panel = state.get("stock_shares_by_panel", {})
 
@@ -1021,6 +1086,7 @@ if __name__ == "__main__":
                         ),
                         show_y_label=(port_index == 0),
                         y_ticks_on_right=(port_index != 0),
+                        price_change=price_changes.get(stock_code),
                     )
                     base_lines[key] = (base_line, base_text)
                     plot_states[key] = panel_state
@@ -1058,6 +1124,7 @@ if __name__ == "__main__":
         def on_timer():
             backend_state = backend.get_state_snapshot()
             latest_prices_snapshot = backend_state["prices"]
+            latest_price_changes = backend_state.get("price_changes", {})
             latest_options_snapshot = backend_state["options"]
             latest_options_sig_snapshot = backend_state["options_sig"]
             latest_hover_sig_snapshot = backend_state["hover_sig"]
@@ -1239,8 +1306,13 @@ if __name__ == "__main__":
                             line, text = base_lines.get(key, (None, None))
                             if line is None and stock_code in latest_prices_snapshot:
                                 y_vals = [opt["strike_price"] for opt in options]
+                                change = latest_price_changes.get(stock_code) or {}
                                 line, text = draw_base_line(
-                                    ax, y_vals, latest_prices_snapshot[stock_code]
+                                    ax,
+                                    y_vals,
+                                    latest_prices_snapshot[stock_code],
+                                    change.get("change_val"),
+                                    change.get("change_rate"),
                                 )
                                 base_lines[key] = (line, text)
                                 last_drawn_prices[key] = latest_prices_snapshot[stock_code]
@@ -1270,7 +1342,15 @@ if __name__ == "__main__":
                                 continue
 
                             ax = axs[row_index][port_index]
-                            moved = move_base_line(ax, line, text, latest_price)
+                            change = latest_price_changes.get(stock_code) or {}
+                            moved = move_base_line(
+                                ax,
+                                line,
+                                text,
+                                latest_price,
+                                change.get("change_val"),
+                                change.get("change_rate"),
+                            )
                             if moved:
                                 last_drawn_prices[key] = latest_price
                                 need_redraw = True

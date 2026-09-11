@@ -46,6 +46,8 @@ from core import (
     get_options_short_value_sums,
     get_stock_share_delta_map,
     _extract_option_stock_codes_from_positions,
+    format_price_label,
+    get_option_pl_labels,
     parse_ports_arg,
     resolve_stock_codes,
     safe_quote_ctx,
@@ -231,6 +233,7 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
     options_version = state["options_version"]
     price_version = state["price_version"]
     # 标的可能被轮询线程改写，统一取自同一份快照，避免面板与代码列表错位
+    price_changes = state.get("price_changes", {})
     stock_codes = state.get("stock_codes") or list(backend.stock_codes)
     stock_codes_version = state.get("stock_codes_version", 0)
 
@@ -240,6 +243,9 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             key = _panel_key(port_index, stock_code)
             raw_options = options_snapshot.get(key, [])
             options = [_normalize_option(option) for option in raw_options]
+            for option, pl_label in zip(options, get_option_pl_labels(raw_options)):
+                option["pl_label"] = pl_label["text"]
+                option["pl_color"] = pl_label["color"]
             stock_share_count = _safe_float(stock_shares_by_panel.get(key), 0.0)
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
             call_short_value, put_short_value = get_options_short_value_sums(
@@ -265,6 +271,11 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                     "put_short_value": put_short_value,
                     "has_data": bool(options),
                     "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
+                    "stock_price_label": format_price_label(
+                        prices_snapshot.get(stock_code),
+                        (price_changes.get(stock_code) or {}).get("change_val"),
+                        (price_changes.get(stock_code) or {}).get("change_rate"),
+                    ),
                     "position_count_text": format_option_position_count_text(
                         position_counts,
                         stock_share_count=stock_share_count,
