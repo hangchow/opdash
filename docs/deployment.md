@@ -1,6 +1,6 @@
 # Ubuntu 网关部署与自动更新方案
 
-设计目标：将 `origin/master` 的 Web 仪表盘部署到 `192.168.10.1`，访问地址为 `http://192.168.10.1:18080`；推送到远端 master 后自动发布，失败恢复上一个可用版本。
+设计目标：将 `origin/master` 的 Web 仪表盘部署到 `192.168.10.1`，局域网访问地址为 `http://192.168.10.1:18080`，指定笔记本通过 Tailscale 访问 `http://<网关的 Tailscale IP>:18080`；推送到远端 master 后自动发布，失败恢复上一个可用版本。
 
 目标主机为 `ssh osaka`（sean 用户），实际 LAN 地址为 `192.168.10.1/24`、接口 `enp9s0f0np0`，系统 Ubuntu 26.04 x86_64、Python 3.14.4、内存约 15 GiB。原需求中的 `192.168.0.1` 已按实机修正。以下记录设计及落地配置；部署程序位于 `deploy/`。
 
@@ -15,6 +15,7 @@ flowchart LR
     Timer --> Deploy[准备版本 / 检查 / 切换 / 回滚]
     Deploy --> App[opdash-web.service]
     Browser[局域网浏览器] -->|192.168.10.1:18080| App
+    Laptop[获准的 Tailscale 笔记本] -->|Tailscale IP:18080| App
     App -->|127.0.0.1:11111| OpenD[网关上手动启动并登录的 Futu OpenD]
 ```
 
@@ -29,7 +30,7 @@ OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:1
 | 现状 | 设计处理 |
 | --- | --- |
 | `opdash_web.py` 在 `main()` 中创建后端和 FastAPI app | 直接执行 Python 入口；单进程，不使用 reload 或多个 worker，避免重复行情连接与轮询 |
-| `--host` / `--port` 是 OpenD，`--web_host` / `--web_port` 是 HTTP | 两组配置分开，HTTP 明确绑定 `192.168.10.1:18080` |
+| `--host` / `--port` 是 OpenD，`--web_host` / `--web_port` 是 HTTP | 两组配置分开，HTTP 绑定 `0.0.0.0:18080`，由防火墙限定 LAN 和指定 Tailscale 设备 |
 | `backend.start()` 在 HTTP 监听之前执行 | 启动检查设置明确期限，初始建议 120 秒，依据实际 OpenD 响应耗时调整 |
 | `/healthz` 返回存活状态和发布 SHA，`/readyz` 返回数据就绪状态 | 部署时同时校验存活、目标版本和数据成功刷新 |
 | Web 自动发现模式允许启动时空仓，成功轮询为空会清空旧面板 | 空仓也能就绪，后续持仓变化自动发现；GUI 初始解析保留原行为 |
@@ -68,7 +69,8 @@ OpenD 保持网关开机后手动启动的方式，Web 固定连接 `127.0.0.1:1
 ```ini
 FUTU_HOST=127.0.0.1
 FUTU_PORTS=11111
-WEB_HOST=192.168.10.1
+WEB_HOST=0.0.0.0
+WEB_CHECK_HOST=127.0.0.1
 WEB_PORT=18080
 POLL_INTERVAL=10
 PRICE_INTERVAL=10
@@ -82,7 +84,7 @@ PROFIT_HIGHLIGHT_THRESHOLD=80
 ```bash
 /opt/opdash/current/.venv/bin/python -u /opt/opdash/current/opdash_web.py \
   --host 127.0.0.1 --port 11111 \
-  --web_host 192.168.10.1 --web_port 18080 \
+  --web_host 0.0.0.0 --web_port 18080 \
   --poll_interval 10 --price_interval 10 --ui_interval 5
 ```
 
@@ -92,9 +94,9 @@ PROFIT_HIGHLIGHT_THRESHOLD=80
 
 网关重启后的顺序为：systemd 启动 Web 的等待程序 → 用户手动启动并登录 OpenD → Web 自动启动并连接 OpenD。OpenD 不纳入自动部署或自动启动管理，Web 不对 OpenD unit 设置自动启动依赖，保留手动启动 OpenD 的顺序。当前应用在后端初始化之前不监听 HTTP，因此等待期间浏览器暂时无法访问仪表盘；若以后希望显示等待页面，需要调整应用启动生命周期。
 
-Web 限制为单核 CPU、1 GiB 内存；构建限制为单核 CPU、2 GiB 内存并降低 IO/CPU 调度优先级。版本保留与清理限制持续占盘；当前可用磁盘约 717 GiB。应用绑定 LAN 地址，同时在现有防火墙 INPUT 链限定 LAN 接口与实际可信网段，拒绝 WAN 和访客网访问该端口。绑定 LAN IP 本身不能替代防火墙。保留现有转发、NAT 和管理规则。
+Web 限制为单核 CPU、1 GiB 内存；构建限制为单核 CPU、2 GiB 内存并降低 IO/CPU 调度优先级。版本保留与清理限制持续占盘；当前可用磁盘约 717 GiB。应用绑定所有 IPv4 地址，在独立防火墙 INPUT 链仅放行回环、指定 LAN 接口/网段，以及指定 Tailscale 设备到网关 Tailscale IP 的 HTTP 请求；其他接口/来源访问该端口一律丢弃。防火墙服务是 Web 的启动前置依赖。保留现有转发、NAT 和管理规则。
 
-当前 HTTP 接口没有登录鉴权，能访问它的客户端可读取持仓数据。本方案访问范围为可信局域网；若需扩大范围，应先加入认证和 HTTPS。
+当前 HTTP 接口没有登录鉴权，能访问它的客户端可读取持仓数据。本方案访问范围为可信局域网及指定的 Tailscale 笔记本；Tailscale 访问同时受 tailnet 策略和主机规则约束。若需扩大到公网或其他用户，应先加入认证和 HTTPS。
 
 ## 5. 自动发布流程
 
@@ -104,7 +106,7 @@ Web 限制为单核 CPU、1 GiB 内存；构建限制为单核 CPU、2 GiB 内�
 4. 完成语法编译、模块导入、依赖一致性及静态文件存在性检查。构建失败不切换；不得提前以生产 OpenD 配置启动第二个轮询进程。
 5. 若当前服务或 OpenD 已处于异常状态，暂缓切换并记录依赖异常，避免将既有故障误判为新代码失败。开机后等待手动启动 OpenD 期间可 fetch/准备候选版本，但不切换；OpenD 就绪后再发布。首次部署没有当前服务时，用 15 秒超时的独立 SDK 探针验证行情/交易登录状态后进行首次启动；端口打开但等待短信验证时，只准备代码，不启动候选版本。
 6. 持久化事务记录：旧 SHA、目标 SHA、阶段。停止旧服务，在同一文件系统以临时软链加 rename 原子替换 `current`，启动新服务。切换有短暂中断，不承诺零停机。
-7. 在检查期限内验证 `/healthz`、首页、关键静态资源及 `/api/snapshot` 的有效 JSON 和字段结构，并确认服务持续存活。健康请求访问 `192.168.10.1:18080`，与绑定地址一致。
+7. 在检查期限内验证 `/healthz`、首页、关键静态资源及 `/api/snapshot` 的有效 JSON 和字段结构，并确认服务持续存活。健康请求使用 `WEB_CHECK_HOST=127.0.0.1`，不依赖笔记本或 Tailscale 连接；未设置该变量且监听为 `0.0.0.0` 时也回退到回环地址。
 8. 通过后更新成功状态和 `previous`。失败则恢复旧 `current`、重启旧版本并再次检查；首次部署没有旧版本时保留失败状态并报错。回滚也失败时保留诊断记录并停止自动切换。
 9. 记录失败 SHA 并设置冷却期；构建或切换失败后对该 SHA 冷却 30 分钟，支持 `update --retry`；新 SHA 不受旧版本冷却限制。OpenD 未就绪时只保留已准备版本，不切换服务。
 10. 保留最近 3 个成功版本，清理时始终保护 `current`、`previous` 和事务涉及的版本。任务中断或重启后先恢复未完成事务，再开始下一次发布。
@@ -208,7 +210,7 @@ sudo -u opdash-deploy -H python3 /usr/local/libexec/opdash/deploy.py update --re
 
 Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更新不会自动覆盖它们；修改这些基础设施文件后，需要管理员重新执行经检查的安装脚本。应用、依赖锁定文件和前端资源会跟随 master 自动发布。
 
-验证命令：`python -m unittest discover -s tests -v`；Web 测试需要先安装 Web 依赖。防火墙由独立 `inet opdash_guard` 表约束 18080 的 LAN 接口/网段及 11111 的本机访问，另通过现有 UFW 放行指定 LAN HTTP 流量；不修改网关 NAT、转发及其他服务规则。
+验证命令：`python -m unittest discover -s tests -v`；Web 测试需要先安装 Web 依赖。防火墙由独立 `inet opdash_guard` 表约束 18080 的 LAN 接口/网段和指定 Tailscale 设备，并限制 11111 的本机访问；另通过现有 UFW 放行相同范围的 HTTP 流量；不修改网关 NAT、转发及其他服务规则。
 
 
 ## 10. 实机验收记录（2026-09-12）
@@ -217,7 +219,7 @@ Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更�
 - HTTP 冒烟检查通过：首页、健康接口、快照及本地 JS/CSS/Plotly 文件均能正常响应。
 - OpenD 完成短信设备验证，并已验证切换到 systemd 后使用记住密码正常登录；未保存明文密码到仓库或启动参数。
 - 首个成功版本 `846d5a8`；LAN 请求 `/healthz`、`/readyz` 返回 200，真实持仓与标的价格就绪。
-- OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止；Web 仅绑定 `192.168.10.1:18080`。
+- OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止；首次部署时 Web 仅绑定 LAN 地址，后续 Tailscale 配置见下节。
 - 服务开机配置：Web、部署 timer、防火墙已 enable；OpenD 仍为手动 start，符合原启动约定。
 
 - 已验证真实 `master` 更新：推送 `1f67d58` 后，timer 自动完成独立版本构建与切换；无更新时 Web PID 保持不变。
@@ -225,4 +227,21 @@ Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更�
 - 已在真实服务上执行一次受控健康检查失败：候选版本正常启动后注入失败，发布器自动恢复原版本，重新通过真实 HTTP/数据就绪检查；未修改账户或应用代码。结果保存在部署状态的 `rollback_drill` 字段及 `opdash-rollback-drill.service` journal 中。
 - 泄露检查覆盖本次部署提交及所有受 Git 跟踪的文件：未检出实际账号、密码、验证码、私钥、访问令牌或含凭据的 URL。`.gitignore` 已排除本地环境配置、OpenD 配置/登录状态、私钥和日志，配置示例仍可提交。
 
-完整发布记录见 `/var/lib/opdash-deploy/state.json` 与 `journalctl -u opdash-deploy`。未重启整台网关，开机行为通过 systemd 配置和服务重启验证。Web 的持仓信息按设计可由获准的可信 LAN 客户端读取；仓库中的 LAN 地址和接口名属于部署配置，不是访问凭据。
+完整发布记录见 `/var/lib/opdash-deploy/state.json` 与 `journalctl -u opdash-deploy`。未重启整台网关，开机行为通过 systemd 配置和服务重启验证。Web 的持仓信息按设计可由获准的 LAN 和 Tailscale 客户端读取；仓库中的 LAN 地址和接口名属于部署配置，不是访问凭据。
+
+
+## 11. Tailscale 直接访问
+
+获准的笔记本连接网关同一 Tailscale 账号后，在浏览器直接打开：
+
+```text
+http://<网关的 Tailscale IPv4>:18080
+```
+
+无需 SSH 隧道、子网路由、出口节点或 Tailscale Serve。服务仍为单个 Web 进程，绑定 `0.0.0.0:18080`。管理员在网关本地 `/etc/opdash/firewall.nft` 中，仅放行 `tailscale0` 上来自指定笔记本 IP、目标为网关 Tailscale IP 的 TCP 18080 请求，并在现有 UFW 配置中添加同范围规则。其他 Tailscale 设备不自动获得访问权。OpenD 保持 `127.0.0.1:11111`，不会经 Tailscale 开放。
+
+具体设备地址及其防火墙白名单仅保存在主机本地，不提交到公开仓库。仓库中的默认防火墙仅放行 LAN；安装器会保留已有 `/etc/opdash/firewall.nft`，防止后续安装覆盖主机上的设备白名单。修改默认模板不会自动改变已有安装的规则，已有主机需要管理员审阅并更新本地文件。
+
+若换用另一台笔记本，先在 `tailscale status` 中确认其属于同一账号，再更新主机本地 nft/UFW 规则中的客户端 IP。tailnet 的 ACL/grants 还必须允许该笔记本连接网关 TCP 18080。
+
+既有安装的 `/etc/opdash/opdash.env` 需要明确设置 `WEB_HOST=0.0.0.0` 和 `WEB_CHECK_HOST=127.0.0.1`；安装器保留已有环境配置，不自动覆盖。先应用收窄来源的防火墙，再修改监听并重启 Web。此次已按此顺序应用，且从网关本机验证回环、LAN IP、Tailscale IP 的 `/readyz` 均返回成功；端到端验证需笔记本在线。

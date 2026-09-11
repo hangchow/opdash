@@ -16,7 +16,10 @@ if [[ ! -f /etc/opdash/opdash.env ]]; then
     install -m 0644 opdash.env.example /etc/opdash/opdash.env
 fi
 install -m 0755 start.py deploy.py /usr/local/libexec/opdash/
-install -m 0644 opdash-firewall.nft /etc/opdash/firewall.nft
+# Preserve host-specific device allowlists; never publish them in this repository.
+if [[ ! -f /etc/opdash/firewall.nft ]]; then
+    install -m 0644 opdash-firewall.nft /etc/opdash/firewall.nft
+fi
 install -m 0644 opdash-web.service opdash-deploy.service opdash-deploy.timer opdash-firewall.service /etc/systemd/system/
 cat > /etc/sudoers.d/opdash-deploy <<'SUDOERS'
 opdash-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl start opdash-web.service, /usr/bin/systemctl stop opdash-web.service, /usr/bin/systemctl restart opdash-web.service
@@ -27,7 +30,9 @@ nft -c -f /etc/opdash/firewall.nft
 systemd-analyze verify /etc/systemd/system/opdash-web.service /etc/systemd/system/opdash-deploy.service /etc/systemd/system/opdash-deploy.timer /etc/systemd/system/opdash-firewall.service
 systemctl daemon-reload
 systemctl enable --now opdash-firewall.service
+# An already-active oneshot service is not reloaded by enable --now.
+nft -f /etc/opdash/firewall.nft
 systemctl enable opdash-web.service
-# UFW is already active on osaka. This adds only the dashboard's LAN access.
+# Keep the existing LAN access. Device-specific rules are managed on the host.
 ufw allow in on enp9s0f0np0 from 192.168.10.0/24 to 192.168.10.1 port 18080 proto tcp comment 'opdash LAN'
 echo 'Installed. Run initial deployment, then enable opdash-deploy.timer after verification.'

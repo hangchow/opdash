@@ -131,7 +131,10 @@ def opend_available(cfg):
 
 
 def request(cfg, path, json_body=True):
-    url = f"http://{cfg['WEB_HOST']}:{cfg['WEB_PORT']}{path}"
+    host = cfg.get("WEB_CHECK_HOST") or cfg["WEB_HOST"]
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    url = f"http://{host}:{cfg['WEB_PORT']}{path}"
     with HTTP.open(url, timeout=4) as response:
         body = response.read()
     return json.loads(body) if json_body else body
