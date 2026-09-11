@@ -869,14 +869,14 @@ def discover_option_stock_codes(host, ports, filter_trdmarket=TrdMarket.NONE, lo
     return stock_codes
 
 
-def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=None):
+def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=None, *, allow_empty_auto=False):
     # 返回 (stock_codes, trade_market_filter, auto_discovered)
     # auto_discovered 为真时，标的由账户持仓推导，后续轮询会持续跟随持仓变化
     stock_codes = parse_stock_codes_arg(raw_stock_codes, parser, allow_empty=True)
     auto_discovered = not stock_codes
     if auto_discovered:
         stock_codes = discover_option_stock_codes(host, ports, logger_obj=logger_obj)
-    if not stock_codes:
+    if not stock_codes and not (auto_discovered and allow_empty_auto):
         message = (
             "No stock codes given and no option positions found in the account. "
             "Pass stock codes explicitly, e.g. US.UVXY,HK.00700"
@@ -884,7 +884,11 @@ def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=No
         if parser is not None:
             parser.error(message)
         raise ValueError(message)
-    return stock_codes, infer_trade_market_filter(stock_codes), auto_discovered
+    market_filter = (
+        TrdMarket.NONE if auto_discovered and allow_empty_auto
+        else infer_trade_market_filter(stock_codes)
+    )
+    return stock_codes, market_filter, auto_discovered
 
 
 def _build_stock_code_targets(stock_codes):

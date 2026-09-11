@@ -1,0 +1,24 @@
+[Unit]
+Description=Deploy origin/master to opdash
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=opdash-deploy
+Group=opdash-deploy
+EnvironmentFile=/etc/opdash/opdash.env
+Environment=HOME=/var/lib/opdash-deploy PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 GIT_TERMINAL_PROMPT=0
+ExecStart=/usr/bin/python3 /usr/local/libexec/opdash/deploy.py update
+TimeoutStartSec=20min
+TimeoutStopSec=180s
+UMask=0022
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/opdash /var/lib/opdash-deploy
+CPUQuota=100%
+MemoryHigh=1G
+MemoryMax=2G
+Nice=10
+IOSchedulingClass=idle

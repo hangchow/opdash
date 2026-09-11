@@ -1,0 +1,35 @@
+[Unit]
+Description=Options position web dashboard
+Wants=network-online.target
+After=network-online.target opdash-firewall.service
+Requires=opdash-firewall.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=opdash
+Group=opdash
+EnvironmentFile=/etc/opdash/opdash.env
+Environment=HOME=/var/lib/opdash PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+StateDirectory=opdash
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /usr/local/libexec/opdash/start.py
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CPUQuota=100%
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

@@ -68,3 +68,8 @@ Then open `http://127.0.0.1:18080` in your browser.
 ## Detailed Usage
 
 For full CLI arguments, more examples, runtime behavior, and troubleshooting, see [docs/usage.md](docs/usage.md).
+
+## Gateway deployment
+
+See [docs/deployment.md](docs/deployment.md) for the Ubuntu gateway setup, local OpenD,
+automatic deployment of `origin/master`, health checks, and rollback commands.

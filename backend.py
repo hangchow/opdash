@@ -98,6 +98,7 @@ class OptionDashboardBackend:
         self.options_done_at_by_port = {}
         self.discovered_codes_by_port = {}
         self.price_done_at = None
+        self.price_success_at = {}
         self.options_version = 0
         self.price_version = 0
         self.stock_codes_version = 0
@@ -149,6 +150,10 @@ class OptionDashboardBackend:
                     trade_lock,
                     purpose=f"{self.init_purpose_prefix}:{port}",
                 )
+                if self.discover_stock_codes is not None:
+                    self.discovered_codes_by_port[port] = list(
+                        self.discover_stock_codes(positions_snapshot)
+                    )
                 options_snapshot = self.get_options_map(
                     trade_ctx,
                     self.stock_codes,
@@ -201,6 +206,10 @@ class OptionDashboardBackend:
                 self.latest_prices = dict(initial_prices)
                 self.latest_price_changes = dict(initial_price_changes)
                 self.price_done_at = initial_price_done_at
+                self.price_success_at = {
+                    code: initial_price_done_at for code, price in initial_prices.items()
+                    if self._safe_float(price) is not None
+                }
             with self.options_lock:
                 self.latest_options = dict(initial_options_by_panel)
                 self.latest_option_code = dict(initial_option_code_by_panel)
@@ -254,8 +263,8 @@ class OptionDashboardBackend:
             merged = sorted(
                 {code for codes in self.discovered_codes_by_port.values() for code in codes}
             )
-            # 全空通常意味着这一轮持仓查询异常，保留上一次的面板而不是清空
-            if not merged or merged == self.stock_codes:
+            # 查询失败会抛错；成功返回空持仓是真实状态。等全部端口初始化后允许清空。
+            if len(self.discovered_codes_by_port) < self.port_count or merged == self.stock_codes:
                 return False
             previous = list(self.stock_codes)
             self.stock_codes = merged
@@ -359,6 +368,37 @@ class OptionDashboardBackend:
             "price_version": price_version,
         }
 
+    def get_readiness(self):
+        """Successful position polls and per-underlying price retrieval, not price movement."""
+        now = datetime.now(timezone.utc)
+
+        def fresh(stamp, limit):
+            if not stamp:
+                return False
+            try:
+                age = (now - datetime.fromisoformat(stamp)).total_seconds()
+                return 0 <= age <= limit
+            except (ValueError, TypeError):
+                return False
+
+        with self.options_lock:
+            codes = list(self.stock_codes)
+            positions_ok = all(
+                fresh(self.options_done_at_by_port.get(port), max(90, self.poll_interval * 3))
+                for port in self.ports
+            )
+        with self.price_lock:
+            prices_ok = all(
+                fresh(self.price_success_at.get(code), max(90, self.price_interval * 3))
+                for code in codes
+            )
+        return {
+            "ok": positions_ok and prices_ok and not self.stop_event.is_set(),
+            "positions_ok": positions_ok,
+            "prices_ok": prices_ok,
+            "empty": not codes,
+        }
+
     def _poll_price_all(self, price_source_port, interval):
         quote_ctx = self.quote_ctxs[price_source_port]
         quote_lock = self.quote_locks[price_source_port]
@@ -384,6 +424,9 @@ class OptionDashboardBackend:
                         self.latest_prices.update(prices)
                         self.latest_price_changes.update(price_changes)
                         self.price_done_at = price_done_at
+                        for code, price in prices.items():
+                            if self._safe_float(price) is not None:
+                                self.price_success_at[code] = price_done_at
                     with self.version_lock:
                         self.price_version += 1
             except Exception as e:

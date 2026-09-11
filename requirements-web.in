@@ -1,0 +1,5 @@
+# Resolve on the target Python version, then commit pip freeze to requirements-web.lock.
+futu-api
+numpy
+fastapi
+uvicorn

@@ -1,0 +1,31 @@
+[Unit]
+Description=Futu OpenD (local API only)
+Wants=network-online.target
+After=network-online.target opdash-firewall.service
+Requires=opdash-firewall.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=futu-opend
+Group=futu-opend
+Environment=HOME=/var/lib/futu-opend
+EnvironmentFile=/etc/futu-opend/account.env
+WorkingDirectory=/opt/futu-opend/10.10.7008
+ExecStart=/opt/futu-opend/10.10.7008/FutuOpenD -cfg_file=/etc/futu-opend/FutuOpenD.xml -login_account=${FUTU_ACCOUNT} -login_by_remember=1 -no_monitor=1 -console=1 -lang=en
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/futu-opend
+MemoryHigh=1G
+MemoryMax=2G
+CPUQuota=100%
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+# Separate table: never flush the gateway's existing routing/firewall rules.
+add table inet opdash_guard
+flush table inet opdash_guard
+table inet opdash_guard {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        tcp dport 18080 iifname "lo" accept
+        tcp dport 18080 iifname "enp9s0f0np0" ip saddr 192.168.10.0/24 ip daddr 192.168.10.1 accept
+        tcp dport 18080 counter drop
+        tcp dport 11111 iifname != "lo" counter drop
+    }
+}

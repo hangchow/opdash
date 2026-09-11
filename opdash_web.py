@@ -2,12 +2,13 @@ import argparse
 import datetime
 import logging
 import math
+import os
 import sys
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import OptionDashboardBackend
@@ -65,6 +66,7 @@ logging.basicConfig(
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
+RELEASE = os.environ.get("OPDASH_RELEASE", "development")
 
 SHORT_COLOR = f"rgba({int(SHORT_POSITION_COLOR[0]*255)},{int(SHORT_POSITION_COLOR[1]*255)},{int(SHORT_POSITION_COLOR[2]*255)},{SHORT_POSITION_COLOR[3]})"
 LONG_COLOR = f"rgba({int(LONG_POSITION_COLOR[0]*255)},{int(LONG_POSITION_COLOR[1]*255)},{int(LONG_POSITION_COLOR[2]*255)},{LONG_POSITION_COLOR[3]})"
@@ -324,10 +326,11 @@ def create_app(backend, ui_interval, server_settings=None):
     app = FastAPI(title=get_dashboard_title())
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
-    @app.get("/", response_class=FileResponse)
+    @app.get("/", response_class=HTMLResponse)
     def index():
-        return FileResponse(
-            WEB_DIR / "index.html",
+        # Each immutable release gets its own static asset URLs.
+        return HTMLResponse(
+            (WEB_DIR / "index.html").read_text().replace("__ASSET_VERSION__", RELEASE),
             headers={
                 "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
                 "Pragma": "no-cache",
@@ -341,7 +344,15 @@ def create_app(backend, ui_interval, server_settings=None):
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True}
+        return {"ok": True, "release": RELEASE}
+
+    @app.get("/readyz")
+    def readyz():
+        readiness = backend.get_readiness()
+        return JSONResponse(
+            {**readiness, "release": RELEASE},
+            status_code=200 if readiness["ok"] else 503,
+        )
 
     return app
 
@@ -355,7 +366,8 @@ def main():
         sys.exit(1)
     try:
         stock_codes, trade_market_filter, auto_stock_codes = resolve_stock_codes(
-            args["stock_codes"], args["host"], args["ports"], logger_obj=logger
+            args["stock_codes"], args["host"], args["ports"], logger_obj=logger,
+            allow_empty_auto=True,
         )
     except ValueError as e:
         logger.error("%s", e)

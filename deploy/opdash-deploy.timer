@@ -1,0 +1,11 @@
+[Unit]
+Description=Check opdash master updates
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=opdash-deploy.service
+
+[Install]
+WantedBy=timers.target

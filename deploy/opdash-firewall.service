@@ -1,0 +1,13 @@
+[Unit]
+Description=Limit opdash and OpenD to intended network interfaces
+Before=opdash-web.service futu-opend.service
+After=ufw.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/opdash/firewall.nft
+# Keep rules installed when the service stops; removal is an administrator action.
+
+[Install]
+WantedBy=multi-user.target
