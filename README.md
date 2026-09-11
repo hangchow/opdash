@@ -8,7 +8,7 @@ Options position dashboard and plotting tool.
 - `opdash_web.py`: web dashboard entry
 - `backend.py`, `core.py`: shared backend logic for GUI/Web
 - `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
-- `options.py`, `positions.py`, `stocks.py`: required local modules
+- `options.py`, `positions.py`: required local modules
 - `docs/screenshots/`: README screenshots for GUI/Web examples
 - [`docs/usage.md`](docs/usage.md): detailed usage guide for both GUI and Web entries
 

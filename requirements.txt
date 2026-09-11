@@ -1,6 +1,5 @@
 futu-api
 matplotlib
 numpy
-pytz
 fastapi
 uvicorn

@@ -27,6 +27,8 @@ US_REGULAR_MARKET_STATES = {"AFTERNOON"}
 US_AFTER_HOURS_STATES = {"AFTER_HOURS_BEGIN"}
 US_OVERNIGHT_STATES = {"OVERNIGHT", "AFTER_HOURS_END"}
 DASHBOARD_TITLE = "Option Positions Dashboard"
+SNAPSHOT_MAX_ATTEMPTS = 3       # 单页行情快照的最大尝试次数（含首次）
+SNAPSHOT_RETRY_INTERVAL = 1.5   # 快照重试间隔秒数，对齐 futu level2 限频节奏
 HK_NUMERIC_STOCK_CODE_RE = re.compile(r"^HK\.(\d{1,5})$", re.IGNORECASE)
 
 
@@ -808,21 +810,26 @@ def _get_options_map_from_positions(positions, stock_codes):
     )
 
 
-def get_stock_share_delta_map(positions, stock_codes, quote_ctx=None, quote_lock=None):
+def get_stock_share_delta_map(
+    positions, stock_codes, quote_ctx=None, quote_lock=None, option_items=None
+):
     # 统计正股仓位 delta（1 股正股按 delta=1）
+    # option_items 仅用于补全 stock_owner 别名；调用方可传入 get_options_map 已合并过
+    # 行情的期权列表，避免同一轮轮询对同一批代码重复请求快照
     stock_codes = list(dict.fromkeys(normalize_stock_code(code) for code in stock_codes))
     stock_delta_map = {stock_code: 0.0 for stock_code in stock_codes}
     if positions is None or positions.empty:
         return stock_delta_map
     code_targets = _build_stock_code_targets(stock_codes)
-    option_items = _extract_option_positions_from_positions(positions)
-    if quote_ctx is not None and option_items:
-        option_quotes = _get_option_quotes_batch(
-            quote_ctx,
-            [option["code"] for option in option_items],
-            quote_lock=quote_lock,
-        )
-        _merge_option_quotes(option_items, option_quotes)
+    if option_items is None:
+        option_items = _extract_option_positions_from_positions(positions)
+        if quote_ctx is not None and option_items:
+            option_quotes = _get_option_quotes_batch(
+                quote_ctx,
+                [option["code"] for option in option_items],
+                quote_lock=quote_lock,
+            )
+            _merge_option_quotes(option_items, option_quotes)
     stock_alias_map = _build_position_stock_alias_map(positions, option_items)
     for _, position in positions.iterrows():
         code = position.get("code")
@@ -921,10 +928,8 @@ def get_options_delta_sum(options):
         delta = _safe_float(option.get("delta"), None)
         if delta is None:
             continue
-        option_type = _option_type_text(option.get("type"))
-        if count < 0 and delta == 0:
-            # 对齐 turtle 逻辑：短仓且 API 返回 0 delta 时做保守兜底
-            delta = 1.0 if option_type == "CALL" else -1.0
+        # delta 为 0 时按 0 计入：此前短仓会兜底成 ±1.0（深度实值假设），
+        # 远价外合约一旦取不到 delta 就会把面板数值放大到错误量级
         contract_size = _safe_int(option.get("contract_size"), 100)
         if contract_size <= 0:
             contract_size = 100
@@ -1158,13 +1163,23 @@ def _get_option_quotes_batch(quote_ctx, option_codes, quote_lock=None):
     page_size = 300  # futu api level2 limit
     for offset in range(0, len(unique_codes), page_size):
         page_codes = unique_codes[offset:offset + page_size]
-        if quote_lock is None:
-            ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
-        else:
-            with quote_lock:
+        # futu level2 限频为 20 次快照 / 30 秒，触顶时整页行情会丢失，
+        # 进而让面板的 delta / 正股别名解析静默缺项，所以这里做有界重试
+        for attempt in range(SNAPSHOT_MAX_ATTEMPTS):
+            if quote_lock is None:
                 ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+            else:
+                with quote_lock:
+                    ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+            if ret_code == RET_OK:
+                break
+            logger.error(
+                f"get_market_snapshot option quotes failed "
+                f"(attempt {attempt + 1}/{SNAPSHOT_MAX_ATTEMPTS}): {ret_code}, {datas}"
+            )
+            if attempt + 1 < SNAPSHOT_MAX_ATTEMPTS:
+                time.sleep(SNAPSHOT_RETRY_INTERVAL)
         if ret_code != RET_OK:
-            logger.error(f"get_market_snapshot option quotes failed: {ret_code}, {datas}")
             continue
         for _, data in datas.iterrows():
             code = data.get("code")

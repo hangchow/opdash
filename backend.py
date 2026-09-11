@@ -1,8 +1,12 @@
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from contextlib import ExitStack
 from threading import Event, Lock, Thread
+
+SHUTDOWN_JOIN_TIMEOUT = 3.0  # 退出时等待轮询线程收尾的总预算（秒）
+SHUTDOWN_MIN_JOIN = 1.0      # 预算耗尽后，每个线程仍保底等待的秒数
 
 
 class OptionDashboardBackend:
@@ -146,11 +150,12 @@ class OptionDashboardBackend:
                     quote_ctx=quote_ctx,
                     quote_lock=quote_lock,
                 )
+                # option_items 由上面的 get_options_map 取回（行情已合并），
+                # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
                     self.stock_codes,
-                    quote_ctx=quote_ctx,
-                    quote_lock=quote_lock,
+                    option_items=self._flatten_options(options_snapshot),
                 )
 
                 for stock_code in self.stock_codes:
@@ -232,10 +237,33 @@ class OptionDashboardBackend:
             self.stop()
             raise
 
-    def stop(self):
+    @staticmethod
+    def _flatten_options(options_snapshot):
+        # get_options_map 已经合并过行情，摊平后复用，避免重复请求期权快照
+        return [
+            option
+            for options in (options_snapshot or {}).values()
+            for option in options
+        ]
+
+    def stop(self, timeout=SHUTDOWN_JOIN_TIMEOUT):
         self.stop_event.set()
+        # 轮询线程可能正卡在 futu 请求里，若在它收尾前就关掉 ctx，请求会在它脚下被抽走。
+        # 预算是整体上限，但每个线程至少保证 SHUTDOWN_MIN_JOIN，避免第一个卡住的线程
+        # 把后面线程的等待时间吃成 0。
+        started_at = time.monotonic()
+        budget = SHUTDOWN_JOIN_TIMEOUT if timeout is None else max(0.0, timeout)
+        deadline = started_at + budget
         for t in self.workers:
-            t.join(timeout=1.0)
+            remaining = deadline - time.monotonic()
+            t.join(timeout=max(min(budget, SHUTDOWN_MIN_JOIN), remaining))
+        still_alive = [t.name for t in self.workers if t.is_alive()]
+        if still_alive:
+            self.logger.warning(
+                "Worker threads still running after %.1fs, closing contexts anyway: %s",
+                time.monotonic() - started_at,
+                ",".join(still_alive),
+            )
         self.workers = []
 
         if self.exit_stack is not None:
@@ -331,11 +359,12 @@ class OptionDashboardBackend:
                     for stock_code, options in options_snapshot.items()
                 }
 
+                # option_items 由上面的 get_options_map 取回（行情已合并），
+                # 因此这里不再传 quote_ctx/quote_lock：它们只服务于自行取行情的兜底分支
                 stock_share_delta_map = self.get_stock_share_delta_map(
                     positions_snapshot,
                     self.stock_codes,
-                    quote_ctx=quote_ctx,
-                    quote_lock=quote_lock,
+                    option_items=self._flatten_options(options_snapshot),
                 )
 
                 options_sig_snapshot = {
