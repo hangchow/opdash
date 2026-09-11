@@ -37,6 +37,13 @@ GUI example:
 python opdash.py US.UVIX --port 11111,22222
 ```
 
+Omit the stock codes to show every option held in the account:
+
+```bash
+python opdash.py --port 11111
+python opdash_web.py --port 11111
+```
+
 Hong Kong stock examples:
 
 ```bash

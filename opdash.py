@@ -43,9 +43,8 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sums,
     get_stock_share_delta_map,
-    infer_trade_market_filter,
     parse_ports_arg,
-    parse_stock_codes_arg,
+    resolve_stock_codes,
     safe_quote_ctx,
     safe_trade_ctx,
     set_profit_highlight_threshold,
@@ -82,7 +81,8 @@ def parse_args():
     args = parser.parse_args()
     ports = parse_ports_arg(args.port, parser, logger_obj=logger, max_ports=2)
     return (
-        parse_stock_codes_arg(args.stock_codes, parser),
+        # 留空表示由账户期权持仓自动发现，解析推迟到下面的启动流程里做
+        args.stock_codes,
         args.host,
         ports,
         args.poll_interval,
@@ -864,8 +864,13 @@ if __name__ == "__main__":
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
-    stock_codes = parse_stock_codes_arg(stock_codes_str)
-    trade_market_filter = infer_trade_market_filter(stock_codes)
+    try:
+        stock_codes, trade_market_filter = resolve_stock_codes(
+            stock_codes_str, host, ports, logger_obj=logger
+        )
+    except ValueError as e:
+        logger.error("%s", e)
+        sys.exit(1)
     started_at = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     startup_settings = build_server_settings(
         started_at=started_at,

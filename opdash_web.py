@@ -45,9 +45,8 @@ from core import (
     get_options_delta_sum,
     get_options_short_value_sums,
     get_stock_share_delta_map,
-    infer_trade_market_filter,
     parse_ports_arg,
-    parse_stock_codes_arg,
+    resolve_stock_codes,
     safe_quote_ctx,
     safe_trade_ctx,
     set_profit_highlight_threshold,
@@ -80,11 +79,11 @@ def parse_args():
     bind_parser_error_handler(parser)
     args = parser.parse_args()
 
-    stock_codes = parse_stock_codes_arg(args.stock_codes, parser)
     ports = parse_ports_arg(args.port, parser, logger_obj=logger, max_ports=2)
 
     return {
-        "stock_codes": stock_codes,
+        # 留空表示由账户期权持仓自动发现，解析推迟到 main() 里做
+        "stock_codes": args.stock_codes,
         "host": args.host,
         "ports": ports,
         "poll_interval": args.poll_interval,
@@ -334,9 +333,15 @@ def main():
     except ValueError as e:
         logger.error("Invalid --profit_highlight_threshold: %s", e)
         sys.exit(1)
-    trade_market_filter = infer_trade_market_filter(args["stock_codes"])
+    try:
+        stock_codes, trade_market_filter = resolve_stock_codes(
+            args["stock_codes"], args["host"], args["ports"], logger_obj=logger
+        )
+    except ValueError as e:
+        logger.error("%s", e)
+        sys.exit(1)
     server_settings = build_server_settings(
-        stock_codes=args["stock_codes"],
+        stock_codes=stock_codes,
         futu_host=args["host"],
         futu_ports=args["ports"],
         poll_interval=args["poll_interval"],
@@ -348,7 +353,7 @@ def main():
         web_port=args["web_port"],
     )
     backend = OptionDashboardBackend(
-        stock_codes=args["stock_codes"],
+        stock_codes=stock_codes,
         host=args["host"],
         ports=args["ports"],
         poll_interval=args["poll_interval"],

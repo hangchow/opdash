@@ -45,7 +45,12 @@ def bind_parser_error_handler(parser):
 def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (default: 5)"):
     parser.add_argument(
         "stock_codes",
-        help="stock codes (e.g., US.UVXY, HK.00700, HK.TCH) that options belong to",
+        nargs="?",
+        default=None,
+        help=(
+            "stock codes (e.g., US.UVXY, HK.00700, HK.TCH) that options belong to; "
+            "omit to show every option held in the account"
+        ),
     )
     parser.add_argument(
         "--host",
@@ -140,7 +145,7 @@ def normalize_stock_code(raw_code):
     return code_text
 
 
-def parse_stock_codes_arg(raw_stock_codes, parser=None):
+def parse_stock_codes_arg(raw_stock_codes, parser=None, allow_empty=False):
     stock_codes = []
     if isinstance(raw_stock_codes, (list, tuple, set)):
         raw_values = list(raw_stock_codes)
@@ -153,6 +158,9 @@ def parse_stock_codes_arg(raw_stock_codes, parser=None):
     stock_codes = list(dict.fromkeys(stock_codes))
     if stock_codes:
         return stock_codes
+    if allow_empty:
+        # 标的为可选参数：留空表示改由账户持仓自动发现
+        return []
     message = "No valid stock codes provided. Example: US.AAPL,HK.00700,HK.TCH"
     if parser is not None:
         parser.error(message)
@@ -732,6 +740,54 @@ def _extract_option_positions_from_positions(positions):
             }
         )
     return option_items
+
+
+def _extract_option_stock_codes_from_positions(positions):
+    # 从期权持仓反推正股代码：stock_owner 需要行情才有值，
+    # 这里优先用它，取不到就退回期权代码本身的前缀（US.UVXY261218C30000 -> US.UVXY）
+    stock_codes = []
+    for option_item in _extract_option_positions_from_positions(positions):
+        stock_code = normalize_stock_code(
+            option_item.get("stock_owner") or option_item.get("stock_code_hint")
+        )
+        if stock_code:
+            stock_codes.append(stock_code)
+    return list(dict.fromkeys(stock_codes))
+
+
+def discover_option_stock_codes(host, ports, filter_trdmarket=TrdMarket.NONE, logger_obj=None):
+    # 未显式指定标的时，扫描账户期权持仓得到全部相关正股；多端口时取并集
+    log = logger_obj or logger
+    discovered = []
+    for port in ports:
+        with safe_trade_ctx(host, port, filter_trdmarket=filter_trdmarket) as trade_ctx:
+            positions = _query_positions_with_log(
+                trade_ctx, None, purpose=f"discover_stock_codes:{port}"
+            )
+        discovered.extend(_extract_option_stock_codes_from_positions(positions))
+    stock_codes = sorted(dict.fromkeys(discovered))
+    log.info(
+        "Discovered %d option underlying(s) from account: %s",
+        len(stock_codes),
+        ",".join(stock_codes) or "-",
+    )
+    return stock_codes
+
+
+def resolve_stock_codes(raw_stock_codes, host, ports, parser=None, logger_obj=None):
+    # 返回 (stock_codes, trade_market_filter)；标的留空时按账户期权持仓自动发现
+    stock_codes = parse_stock_codes_arg(raw_stock_codes, parser, allow_empty=True)
+    if not stock_codes:
+        stock_codes = discover_option_stock_codes(host, ports, logger_obj=logger_obj)
+    if not stock_codes:
+        message = (
+            "No stock codes given and no option positions found in the account. "
+            "Pass stock codes explicitly, e.g. US.UVXY,HK.00700"
+        )
+        if parser is not None:
+            parser.error(message)
+        raise ValueError(message)
+    return stock_codes, infer_trade_market_filter(stock_codes)
 
 
 def _build_stock_code_targets(stock_codes):

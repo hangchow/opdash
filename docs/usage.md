@@ -57,12 +57,12 @@ If you pass two ports, charts are shown side by side.
 ### Syntax
 
 ```bash
-python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT]
+python opdash.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT]
 ```
 
 ### Arguments
 
-- `stock_codes`: comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`
+- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account; the underlyings are then discovered from the option positions at startup (union across ports), so newly opened underlyings need a restart to appear
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one or two Futu ports, default `11111`
 - `--poll_interval`: option polling interval seconds, default `10`
@@ -124,12 +124,12 @@ python opdash.py -h
 ### Syntax
 
 ```bash
-python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--web_host HOST] [--web_port PORT]
+python opdash_web.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval SEC] [--price_interval SEC] [--ui_interval SEC] [--price_mode MODE] [--profit_highlight_threshold PCT] [--web_host HOST] [--web_port PORT]
 ```
 
 ### Arguments
 
-- `stock_codes`: comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`
+- `stock_codes`: optional, comma-separated stock codes such as `US.AAPL`, `HK.00700`, `HK.TCH`. Omit it to show every option held in the account; the underlyings are then discovered from the option positions at startup (union across ports), so newly opened underlyings need a restart to appear
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one or two Futu ports, default `11111`
 - `--poll_interval`: option polling interval seconds, default `10`
