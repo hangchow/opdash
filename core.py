@@ -82,10 +82,10 @@ def add_dashboard_common_args(parser, *, ui_help="ui refresh interval seconds (d
         "--price_mode",
         metavar="",
         choices=["auto", "last", "pre", "after", "overnight", "implied"],
-        default="implied",
+        default="auto",
         help=(
             "price source mode: auto/last/pre/after/overnight/implied "
-            "(default: implied)"
+            "(default: auto)"
         ),
     )
     parser.add_argument(

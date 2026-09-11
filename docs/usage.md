@@ -68,7 +68,7 @@ python opdash.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval SEC
 - `--poll_interval`: option polling interval seconds, default `10`
 - `--price_interval`: price polling interval seconds, default `10`
 - `--ui_interval`: UI refresh interval seconds, default `5`
-- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `implied`
+- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`
 - `--profit_highlight_threshold`: filled-marker threshold percent, default `80`
 
 ### Examples
@@ -135,7 +135,7 @@ python opdash_web.py <stock_codes> [--host HOST] [--port PORTS] [--poll_interval
 - `--poll_interval`: option polling interval seconds, default `10`
 - `--price_interval`: price polling interval seconds, default `10`
 - `--ui_interval`: browser refresh interval seconds, default `5`
-- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `implied`
+- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`
 - `--profit_highlight_threshold`: filled marker threshold percent, default `80`
 - `--web_host`: web server host, default `127.0.0.1`
 - `--web_port`: web server port, default `18080`
