@@ -2,3 +2,18 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+
+# Local deployment settings, credentials, and SDK login state.
+.env
+.env.*
+!.env.example
+account.env
+opdash.env
+FutuOpenD.xml
+OpenD.xml
+.com.futunn.FutuOpenD/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*.log

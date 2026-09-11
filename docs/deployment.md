@@ -220,4 +220,9 @@ Web 单元和 `/usr/local/libexec/opdash/` 程序由管理员安装，仓库更�
 - OpenD 的 `11111` 仅监听回环地址，从 LAN 连接被阻止；Web 仅绑定 `192.168.10.1:18080`。
 - 服务开机配置：Web、部署 timer、防火墙已 enable；OpenD 仍为手动 start，符合原启动约定。
 
-故障注入和真实 master 更新的后续验收以 `/var/lib/opdash-deploy/state.json` 与 `journalctl -u opdash-deploy` 的发布记录为准。未重启整台网关，开机行为通过 systemd 配置和服务重启验证。
+- 已验证真实 `master` 更新：推送 `1f67d58` 后，timer 自动完成独立版本构建与切换；无更新时 Web PID 保持不变。
+- 无头 Chrome 验证本地 Plotly 正常加载、5 个面板成功绘图，没有加载或刷新错误。
+- 已在真实服务上执行一次受控健康检查失败：候选版本正常启动后注入失败，发布器自动恢复原版本，重新通过真实 HTTP/数据就绪检查；未修改账户或应用代码。结果保存在部署状态的 `rollback_drill` 字段及 `opdash-rollback-drill.service` journal 中。
+- 泄露检查覆盖本次部署提交及所有受 Git 跟踪的文件：未检出实际账号、密码、验证码、私钥、访问令牌或含凭据的 URL。`.gitignore` 已排除本地环境配置、OpenD 配置/登录状态、私钥和日志，配置示例仍可提交。
+
+完整发布记录见 `/var/lib/opdash-deploy/state.json` 与 `journalctl -u opdash-deploy`。未重启整台网关，开机行为通过 systemd 配置和服务重启验证。Web 的持仓信息按设计可由获准的可信 LAN 客户端读取；仓库中的 LAN 地址和接口名属于部署配置，不是访问凭据。
