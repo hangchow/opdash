@@ -77,7 +77,7 @@ automatic deployment of `origin/master`, health checks, and rollback commands.
 For encrypted OpenD access from the Osaka LAN, use the private key configured on the gateway:
 
 ```bash
-python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
+python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key ~/.config/futu/futu-opend-rsa.pem
 ```
 
-`opdash_web.py` supports the same flag. Keep the private key local; `.secrets/` is ignored by Git.
+`opdash_web.py` supports the same flag. The key lives outside the repo in `~/.config/futu/` (directory 0700, file 0600) so other local projects can share it.

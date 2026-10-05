@@ -253,7 +253,7 @@ http://<网关的 Tailscale IPv4>:18080
 已按要求将 `192.168.10.1:11111` 对 `192.168.10.0/24` 局域网开放。网关上的 Web 继续使用 `127.0.0.1:11111`；局域网 GUI 客户端可使用：
 
 ```bash
-python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
+python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key ~/.config/futu/futu-opend-rsa.pem
 ```
 
 持久配置如下：
@@ -283,7 +283,7 @@ sudo ufw allow in on enp9s0f0np0 from 192.168.10.0/24 to 192.168.10.1 port 11111
 
 已在本机生成 SDK 要求的 1024 位 PKCS#1 RSA 私钥，通过 SSH 传到网关。私钥文件不进入 Git：
 
-- 本机：`.secrets/futu-opend-rsa.pem`，目录权限 0700、文件权限 0600。
+- 本机：`~/.config/futu/futu-opend-rsa.pem`，目录权限 0700、文件权限 0600。2026-10-06 从项目内 `.secrets/` 移出，供本地多个项目共用。
 - 网关：`/etc/futu-opend/keys/opdash-rsa.pem`，目录权限 0750、文件权限 0640，属主 root、组 futu-api。futu-opend、opdash、opdash-deploy 加入该组，以供 OpenD、仪表盘及首次部署探针读取。
 - `/etc/futu-opend/FutuOpenD.xml` 增加 `<rsa_private_key>/etc/futu-opend/keys/opdash-rsa.pem</rsa_private_key>`。
 - `/etc/opdash/opdash.env` 增加 `FUTU_RSA_PRIVATE_KEY=/etc/futu-opend/keys/opdash-rsa.pem`；Web 的 OpenD 地址仍为 `127.0.0.1:11111`。

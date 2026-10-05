@@ -35,8 +35,8 @@ All commands below assume the virtual environment is already activated.
 On the deployed Osaka LAN (`192.168.10.0/24`), OpenD requires encrypted SDK connections:
 
 ```bash
-python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
-python opdash_web.py --host 192.168.10.1 --port 11111 --rsa_private_key .secrets/futu-opend-rsa.pem
+python opdash.py --host 192.168.10.1 --port 11111 --rsa_private_key ~/.config/futu/futu-opend-rsa.pem
+python opdash_web.py --host 192.168.10.1 --port 11111 --rsa_private_key ~/.config/futu/futu-opend-rsa.pem
 ```
 
 The private key must match the gateway's `rsa_private_key` configuration. Both entrypoints
