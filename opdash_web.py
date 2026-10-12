@@ -76,6 +76,8 @@ RELEASE = os.environ.get("OPDASH_RELEASE", "development")
 SHORT_COLOR = f"rgba({int(SHORT_POSITION_COLOR[0]*255)},{int(SHORT_POSITION_COLOR[1]*255)},{int(SHORT_POSITION_COLOR[2]*255)},{SHORT_POSITION_COLOR[3]})"
 LONG_COLOR = f"rgba({int(LONG_POSITION_COLOR[0]*255)},{int(LONG_POSITION_COLOR[1]*255)},{int(LONG_POSITION_COLOR[2]*255)},{LONG_POSITION_COLOR[3]})"
 HOLLOW_COLOR = f"rgba({int(HOLLOW_FACE_COLOR[0]*255)},{int(HOLLOW_FACE_COLOR[1]*255)},{int(HOLLOW_FACE_COLOR[2]*255)},{HOLLOW_FACE_COLOR[3]})"
+# 橙：被击穿（价内）的 short 仓位。红=现价线/盈利，绿=short/亏损，粉=long，都已占用
+BREACH_COLOR = "rgba(234,88,12,1.0)"
 
 
 def parse_args():
@@ -191,6 +193,35 @@ def _normalize_option(option):
     }
 
 
+def _breach_depth(option, stock_price):
+    # short 仓位被击穿的深度（占行权价的百分比）；未击穿、非 short 或缺现价时返回 None。
+    # long 仓位价内是好事，不标
+    if option["side"] != SIDE_SHORT or stock_price is None:
+        return None
+    strike_price = option["strike_price"]
+    if strike_price <= 0:
+        return None
+    gap = stock_price - strike_price if option["type"] == "CALL" else strike_price - stock_price
+    return gap / strike_price * 100 if gap > 0 else None
+
+
+def _mark_breached_options(options, stock_price):
+    # 击穿随现价变化，所以在出快照时按图上那条现价线判定，保证"点在线的错误一侧"
+    # 和"被标出"一致。边框和填充都换色：单张合约的标记直径约 7px，只换填充看不出来
+    breached_count = 0
+    for option in options:
+        depth = _breach_depth(option, stock_price)
+        option["breached"] = depth is not None
+        if depth is None:
+            continue
+        breached_count += 1
+        option["breach_pct"] = depth
+        option["marker_line_color"] = BREACH_COLOR
+        option["marker_fill_color"] = BREACH_COLOR
+        option["hover_text"] += f"<br>ITM {depth:.2f}% (stock={stock_price:.2f})"
+    return breached_count
+
+
 def build_uvicorn_log_config():
     return {
         "version": 1,
@@ -254,6 +285,8 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
             for option, pl_label in zip(options, get_option_pl_labels(raw_options)):
                 option["pl_label"] = pl_label["text"]
                 option["pl_color"] = pl_label["color"]
+            stock_price = _safe_float(prices_snapshot.get(stock_code), None)
+            breached_count = _mark_breached_options(options, stock_price)
             stock_share_count = _safe_float(stock_shares_by_panel.get(key), 0.0)
             delta_sum = _safe_float(delta_sum_by_panel.get(key), 0.0)
             call_short_value, put_short_value = get_options_short_value_sums(
@@ -278,7 +311,8 @@ def build_web_snapshot(backend, ui_interval, server_settings=None):
                     "call_short_value": call_short_value,
                     "put_short_value": put_short_value,
                     "has_data": bool(options),
-                    "stock_price": _safe_float(prices_snapshot.get(stock_code), None),
+                    "breached_count": breached_count,
+                    "stock_price": stock_price,
                     "stock_price_label": format_price_label(
                         prices_snapshot.get(stock_code),
                         (price_changes.get(stock_code) or {}).get("change_val"),

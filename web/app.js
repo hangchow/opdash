@@ -12,6 +12,7 @@ const fullscreenState = {
 const LEGEND_SHORT_COLOR = "rgb(0, 153, 0)";
 const LEGEND_LONG_COLOR = "rgb(255, 104, 181)";
 const LEGEND_HOLLOW_COLOR = "#ffffff";
+const BREACH_COLOR = "rgb(234, 88, 12)"; // 被击穿（价内）的 short 仓位，与后端 BREACH_COLOR 一致
 const Y_RANGE_PAD_RATIO = 0.1;
 const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
 const Y_RANGE_MIN_PAD = 1.0;
@@ -584,6 +585,18 @@ function legendFilledItem(thresholdText) {
   `;
 }
 
+function legendBreachedItem() {
+  return `
+    <div class="legend-item">
+      <span class="legend-icon legend-icon-pair">
+        ${markerSvg("circle", BREACH_COLOR, true)}
+        ${markerSvg("triangle", BREACH_COLOR, true)}
+      </span>
+      <span class="legend-label">Short ITM</span>
+    </div>
+  `;
+}
+
 function updateLegend(threshold) {
   const legend = document.getElementById("legend");
   if (!legend) {
@@ -600,6 +613,7 @@ function updateLegend(threshold) {
     legendItem(markerSvg("triangle", LEGEND_SHORT_COLOR), "Short Put"),
     legendItem(markerSvg("triangle", LEGEND_LONG_COLOR), "Long Put"),
     legendFilledItem(thresholdText),
+    legendBreachedItem(),
   ].join("");
 }
 
@@ -714,6 +728,12 @@ function renderPanel(id, panel) {
   }
 
   const yRange = pickPanelYRange(id, yVals, panel.stock_price);
+
+  // 面板级提示：多个面板并排时先看出哪个面板有被击穿的 short 仓位
+  const breachedCount = Number(panel.breached_count || 0);
+  const titleText = breachedCount > 0
+    ? `${panel.title} | <span style="color:${BREACH_COLOR}"><b>short ITM: ${breachedCount}</b></span>`
+    : panel.title;
 
   const traces = [];
   if (hasOptions) {
@@ -835,7 +855,7 @@ function renderPanel(id, panel) {
 
   const layout = {
     template: "none",
-    title: { text: panel.title, x: 0.5, xanchor: "center", font: { size: 14 } },
+    title: { text: titleText, x: 0.5, xanchor: "center", font: { size: 14 } },
     margin: isLeftColumn
       ? { l: 70, r: 20, t: 58, b: 92 }
       : { l: 36, r: 70, t: 58, b: 92 },
@@ -872,6 +892,7 @@ function renderPanel(id, panel) {
 
   const config = { responsive: true, displaylogo: false };
   const chartEl = document.getElementById(id);
+  chartEl.closest(".card")?.classList.toggle("card-breached", breachedCount > 0);
   Plotly.react(id, traces, layout, config).then(() => {
     bindOptionTooltip(chartEl);
     bindHoverLabelClamp(chartEl);
