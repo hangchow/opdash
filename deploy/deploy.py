@@ -141,7 +141,7 @@ def request(cfg, path, json_body=True):
 
 
 def opend_logged_in(cfg, sha):
-    # Used for bootstrap, where there is no existing /readyz to check.
+    # Asks OpenD directly instead of trusting the current release's /readyz.
     # The SDK may retry login forever: isolate it in a bounded subprocess.
     probe = """
 import sys
@@ -168,13 +168,16 @@ for port in sys.argv[2].split(','):
         return False
 
 
-def healthy(cfg, sha, *, full=False):
+def healthy(cfg, sha, *, full=False, ready=True):
+    # ready=False only checks that this release is the one serving HTTP.
     try:
         health = request(cfg, "/healthz")
-        ready = request(cfg, "/readyz")
-        if not (health.get("ok") and health.get("release") == sha
-                and ready.get("ok") and ready.get("release") == sha):
+        if not (health.get("ok") and health.get("release") == sha):
             return False
+        if ready:
+            readiness = request(cfg, "/readyz")
+            if not (readiness.get("ok") and readiness.get("release") == sha):
+                return False
         if full:
             snapshot = request(cfg, "/api/snapshot")
             if not (isinstance(snapshot.get("panels"), list)
@@ -189,11 +192,11 @@ def healthy(cfg, sha, *, full=False):
         return False
 
 
-def wait_healthy(cfg, sha):
+def wait_healthy(cfg, sha, *, ready=True):
     deadline = time.monotonic() + HEALTH_TIMEOUT
     consecutive = 0
     while time.monotonic() < deadline:
-        if healthy(cfg, sha, full=consecutive == 0):
+        if healthy(cfg, sha, full=ready and consecutive == 0, ready=ready):
             consecutive += 1
             if consecutive >= 3:
                 return True
@@ -237,12 +240,16 @@ def prepare(sha):
 def restore(state, cfg):
     transaction = state["transaction"]
     old = transaction["old"]
-    log(f"restore {old or 'no previous release'}")
+    # An old release that was already unready only has to come back serving:
+    # demanding more than its pre-switch state would pause on a fault we did not cause.
+    old_ready = transaction.get("old_ready", True)
+    log(f"restore {old or 'no previous release'}"
+        + ("" if old_ready else " (was not ready before the switch)"))
     control("stop")
     point("current", old)
     if old:
         control("start")
-        if not wait_healthy(cfg, old):
+        if not wait_healthy(cfg, old, ready=old_ready):
             state["paused"] = True
             save(state)  # Preserve transaction for administrator recovery.
             raise RuntimeError("Rollback not ready; deployments paused")
@@ -252,7 +259,8 @@ def restore(state, cfg):
 
 def activate(state, cfg, sha):
     old = linked("current")
-    state["transaction"] = {"old": old, "target": sha}
+    state["transaction"] = {"old": old, "target": sha,
+                            "old_ready": bool(old) and healthy(cfg, old)}
     save(state)
     try:
         log(f"activate {sha} (previous {old})")
@@ -306,11 +314,10 @@ def update(state, cfg, retry):
     stage = "prepare"
     try:
         prepare(sha)
-        current = linked("current")
-        if (not opend_available(cfg)
-                or (current and not healthy(cfg, current))
-                or (not current and not opend_logged_in(cfg, sha))):
-            log(f"prepared {sha}; waiting for OpenD/current service readiness")
+        # Gate on the dependency itself. The current release may be unready because
+        # of its own defect, and then the candidate is the fix that must get through.
+        if not opend_available(cfg) or not opend_logged_in(cfg, sha):
+            log(f"prepared {sha}; waiting for OpenD login")
             return
         stage = "activate"
         activate(state, cfg, sha)

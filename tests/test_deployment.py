@@ -83,6 +83,53 @@ class DeploymentTests(unittest.TestCase):
         control.assert_not_called()
         self.assertEqual(d.linked("current"), self.old)
 
+    def test_logged_out_opend_does_not_switch(self):
+        with patch.object(d, "run", return_value=self.new), patch.object(d, "prepare"), patch.object(d, "opend_available", return_value=True), patch.object(d, "opend_logged_in", return_value=False), patch.object(d, "control") as control:
+            d.update(self.state, {}, False)
+        control.assert_not_called()
+        self.assertEqual(d.linked("current"), self.old)
+
+    def test_unready_current_does_not_block_its_fix(self):
+        # The running release can be unready because of the bug the candidate fixes.
+        health = lambda cfg, sha, **kwargs: sha == self.new
+        with patch.object(d, "run", return_value=self.new), patch.object(d, "prepare"), patch.object(d, "opend_available", return_value=True), patch.object(d, "opend_logged_in", return_value=True), patch.object(d, "healthy", side_effect=health), patch.object(d, "control"), patch.object(d.time, "sleep"):
+            d.update(self.state, {}, False)
+        self.assertEqual(d.linked("current"), self.new)
+        self.assertEqual(d.linked("previous"), self.old)
+        self.assertEqual(d.read_state()["current"], self.new)
+
+    def test_failed_candidate_restores_unready_old_without_pausing(self):
+        # Before the switch the old release served HTTP but was not ready.
+        health = lambda cfg, sha, *, full=False, ready=True: sha == self.old and not ready
+        with patch.object(d, "run", return_value=self.new), patch.object(d, "prepare"), patch.object(d, "opend_available", return_value=True), patch.object(d, "opend_logged_in", return_value=True), patch.object(d, "healthy", side_effect=health), patch.object(d, "control"), patch.object(d.time, "sleep"), patch.object(d, "HEALTH_TIMEOUT", 0.05):
+            with self.assertRaisesRegex(RuntimeError, "Candidate"):
+                d.update(self.state, {}, False)
+        state = d.read_state()
+        self.assertEqual(d.linked("current"), self.old)
+        self.assertNotIn("paused", state)
+        self.assertNotIn("transaction", state)
+        self.assertEqual(state["failed"]["sha"], self.new)
+
+    def test_failed_candidate_still_requires_ready_old_to_recover(self):
+        ready_before_switch = iter([True])
+        health = lambda cfg, sha, **kwargs: next(ready_before_switch, False)
+        with patch.object(d, "healthy", side_effect=health), patch.object(d, "control"), patch.object(d.time, "sleep"), patch.object(d, "HEALTH_TIMEOUT", 0.05):
+            with self.assertRaisesRegex(RuntimeError, "Rollback"):
+                d.activate(self.state, {}, self.new)
+        state = d.read_state()
+        self.assertTrue(state["paused"])
+        self.assertTrue(state["transaction"]["old_ready"])
+
+    def test_interrupted_transaction_recovers_unready_old(self):
+        self.state["transaction"] = {"old": self.old, "target": self.new, "old_ready": False}
+        d.point("current", self.new)
+        d.save(self.state)
+        health = lambda cfg, sha, *, full=False, ready=True: sha == self.old and not ready
+        with patch.object(d, "control"), patch.object(d, "healthy", side_effect=health), patch.object(d.time, "sleep"):
+            d.restore(self.state, {})
+        self.assertEqual(d.linked("current"), self.old)
+        self.assertNotIn("transaction", d.read_state())
+
     def test_incomplete_release_cannot_be_activated(self):
         (self.root / "releases" / self.new / ".complete").unlink()
         with self.assertRaisesRegex(RuntimeError, "incomplete"):
