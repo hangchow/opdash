@@ -82,7 +82,7 @@ python opdash.py [stock_codes] [--host HOST] [--port PORTS] [--rsa_private_key F
 - `--poll_interval`: option polling interval seconds, default `10`
 - `--price_interval`: price polling interval seconds, default `10`
 - `--ui_interval`: UI refresh interval seconds, default `5`
-- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`
+- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`. HK option class codes such as `HK.TCH` are priced from the underlying reported by the option quote (`HK.00700`), and fall back to `implied` until that quote arrives
 - `--profit_highlight_threshold`: filled-marker threshold percent, default `80`
 
 ### Examples
@@ -160,7 +160,7 @@ port's errors remain visible. Browser refresh failures are also shown and retrie
 - `--poll_interval`: option polling interval seconds, default `10`
 - `--price_interval`: price polling interval seconds, default `10`
 - `--ui_interval`: browser refresh interval seconds, default `5`
-- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`
+- `--price_mode`: `auto|last|pre|after|overnight|implied`, default `auto`. HK option class codes such as `HK.TCH` are priced from the underlying reported by the option quote (`HK.00700`), and fall back to `implied` until that quote arrives
 - `--profit_highlight_threshold`: filled marker threshold percent, default `80`
 - `--web_host`: web server host, default `127.0.0.1`
 - `--web_port`: web server port, default `18080`

@@ -97,6 +97,7 @@ class OptionDashboardBackend:
         self.latest_hover_sig = {}
         self.latest_option_code = {}
         self.latest_price_option_code = {}
+        self.latest_stock_owner = {}
         self.latest_delta_sum_by_panel = {}
         self.latest_stock_shares_by_panel = {}
         self.options_done_at_by_port = {}
@@ -157,6 +158,7 @@ class OptionDashboardBackend:
             initial_plot_signatures = {}
             initial_hover_signatures = {}
             initial_price_option_codes = {}
+            initial_stock_owner = {}
             initial_delta_sum_by_panel = {}
             initial_stock_shares_by_panel = {}
 
@@ -182,6 +184,7 @@ class OptionDashboardBackend:
                     self.stock_codes,
                     option_items=self._flatten_options(options_snapshot),
                 )
+                initial_stock_owner.update(self._stock_owners(options_snapshot))
 
                 for stock_code in self.stock_codes:
                     key = self.panel_key(port_index, stock_code)
@@ -213,6 +216,7 @@ class OptionDashboardBackend:
                     initial_price_option_codes,
                     price_mode=self.price_mode,
                     quote_lock=price_quote_lock,
+                    stock_owner_map=initial_stock_owner,
                 )
             initial_price_done_at = (
                 datetime.now(timezone.utc).isoformat() if initial_prices else None
@@ -233,6 +237,7 @@ class OptionDashboardBackend:
                 self.latest_hover_sig = dict(initial_hover_signatures)
                 self.latest_delta_sum_by_panel = dict(initial_delta_sum_by_panel)
                 self.latest_stock_shares_by_panel = dict(initial_stock_shares_by_panel)
+                self.latest_stock_owner = dict(initial_stock_owner)
                 for stock_code in self.stock_codes:
                     self.latest_price_option_code[stock_code] = self.pick_price_option_code(
                         stock_code,
@@ -312,8 +317,9 @@ class OptionDashboardBackend:
         ):
             for key in [k for k in store if k[1] not in keep]:
                 del store[key]
-        for stock_code in [c for c in self.latest_price_option_code if c not in keep]:
-            del self.latest_price_option_code[stock_code]
+        for store in (self.latest_price_option_code, self.latest_stock_owner):
+            for stock_code in [c for c in store if c not in keep]:
+                del store[stock_code]
 
     @staticmethod
     def _flatten_options(options_snapshot):
@@ -323,6 +329,19 @@ class OptionDashboardBackend:
             for options in (options_snapshot or {}).values()
             for option in options
         ]
+
+    @staticmethod
+    def _stock_owners(options_snapshot):
+        # 期权行情里的 stock_owner 才是可查快照的正股代码（HK.TCH -> HK.00700）
+        owners = {}
+        for stock_code, options in (options_snapshot or {}).items():
+            owner = next(
+                (option.get("stock_owner") for option in options if option.get("stock_owner")),
+                None,
+            )
+            if owner:
+                owners[stock_code] = owner
+        return owners
 
     def stop(self, timeout=SHUTDOWN_JOIN_TIMEOUT):
         self.stop_event.set()
@@ -441,12 +460,14 @@ class OptionDashboardBackend:
                             for stock_code, option_code in self.latest_price_option_code.items()
                             if option_code
                         }
+                        stock_owner_snapshot = dict(self.latest_stock_owner)
                     prices, price_changes = self.get_stock_prices_with_fallback(
                         quote_ctx,
                         self.stock_codes,
                         option_code_snapshot,
                         price_mode=self.price_mode,
                         quote_lock=quote_lock,
+                        stock_owner_map=stock_owner_snapshot,
                     )
                     if prices:
                         price_done_at = datetime.now(timezone.utc).isoformat()
@@ -531,6 +552,8 @@ class OptionDashboardBackend:
                                 self.latest_option_code,
                                 self.port_count,
                             )
+                        # 只增不减：某轮期权行情被限频时沿用上次的正股映射
+                        self.latest_stock_owner.update(self._stock_owners(options_snapshot))
                         self.options_done_at_by_port[port] = datetime.now(timezone.utc).isoformat()
 
                     with self.version_lock:

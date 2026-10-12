@@ -1255,13 +1255,34 @@ def _get_us_market_state(quote_ctx, quote_lock=None):
     return None
 
 
+def _stock_snapshot_code(stock_code, stock_owner=None):
+    # 正股快照只认真实证券代码：港股期权按类别代号持仓（HK.TCH），要换成期权行情
+    # 返回的 stock_owner（HK.00700）。还没拿到 stock_owner 的港股代号返回 None，
+    # 不进正股批次——一个未知代码会让 OpenD 拒掉整页，连带其它标的一起丢价
+    owner = normalize_stock_code(stock_owner)
+    if owner:
+        return owner
+    code = normalize_stock_code(stock_code)
+    market, _, symbol = code.partition(".")
+    if market == "HK" and not symbol.isdigit():
+        return None
+    return code
+
+
 def _get_stock_prices_from_snapshot_batch(
-    quote_ctx, stock_codes, price_mode="implied", market_state=None, quote_lock=None
+    quote_ctx, stock_codes, price_mode="implied", market_state=None, quote_lock=None,
+    stock_owner_map=None,
 ):
     # 批量从正股快照读取价格字段（last/pre/after/overnight）及同源涨跌
+    # stock_owner_map: 标的 -> 真实正股代码；结果仍按传入的标的代码返回
     prices = {}
     changes = {}
-    unique_codes = list(dict.fromkeys(code for code in stock_codes if code))
+    quote_targets = {}
+    for stock_code in dict.fromkeys(code for code in stock_codes if code):
+        quote_code = _stock_snapshot_code(stock_code, (stock_owner_map or {}).get(stock_code))
+        if quote_code:
+            quote_targets.setdefault(quote_code, []).append(stock_code)
+    unique_codes = list(quote_targets)
     if not unique_codes:
         return prices, changes
     fields = _price_fields_by_mode(price_mode, market_state=market_state)
@@ -1290,10 +1311,11 @@ def _get_stock_prices_from_snapshot_batch(
             price_field, price = _pick_price_field_from_snapshot(data, fields)
             if price is None:
                 continue
-            prices[code] = price
             change_val, change_rate = _pick_change_from_snapshot(data, price_field, price)
-            if change_val is not None and change_rate is not None:
-                changes[code] = {"change_val": change_val, "change_rate": change_rate}
+            for stock_code in quote_targets.get(code, ()):
+                prices[stock_code] = price
+                if change_val is not None and change_rate is not None:
+                    changes[stock_code] = {"change_val": change_val, "change_rate": change_rate}
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.debug(
         f"get_market_snapshot stock prices done: codes={len(unique_codes)}, "
@@ -1303,7 +1325,8 @@ def _get_stock_prices_from_snapshot_batch(
 
 
 def _get_stock_prices_with_fallback(
-    quote_ctx, stock_codes, option_code_snapshot, price_mode="implied", quote_lock=None
+    quote_ctx, stock_codes, option_code_snapshot, price_mode="implied", quote_lock=None,
+    stock_owner_map=None,
 ):
     # 先取正股快照（支持盘前/盘后字段），缺失时回退到期权 implied 价格
     # 返回 (prices, changes)；implied 回退路径推不出涨跌，changes 里不会有该标的
@@ -1319,6 +1342,7 @@ def _get_stock_prices_with_fallback(
             price_mode=price_mode,
             market_state=market_state,
             quote_lock=quote_lock,
+            stock_owner_map=stock_owner_map,
         )
     missing_codes = [code for code in stock_codes if code not in prices]
     if not missing_codes:
