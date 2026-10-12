@@ -143,12 +143,15 @@ python opdash_web.py [stock_codes] [--host HOST] [--port PORTS] [--poll_interval
 
 Web auto-discovery also starts with an empty account and keeps polling for new positions.
 `/healthz` checks HTTP liveness and the deployed release; `/readyz` returns 503 when
-position polls or per-underlying price retrieval become stale. See [gateway deployment](deployment.md).
+position polls or per-underlying price retrieval become stale, or as soon as a poll
+fails outright. A rejected query that leaves positions and prices refreshing keeps
+`/readyz` at 200. See [gateway deployment](deployment.md).
 
 The page starts before OpenD is ready. A banner above the charts shows connection,
 encryption, position-query, and quote-query failures with the endpoint, error, time,
 and suggested fix. Existing charts retain the last successful data and are marked
-as potentially stale. Errors clear after the affected operation succeeds; another
+as potentially stale. When data is still refreshing despite a rejected query, the
+banner says so instead and lists what failed. Errors clear after the affected operation succeeds; another
 port's errors remain visible. Browser refresh failures are also shown and retried.
 
 ### Arguments

@@ -60,9 +60,11 @@ class OpenDStatus(logging.Handler):
                 text in message.lower() for text in
                 ('fail', 'error', 'timeout', 'timed out', 'disconnect')):
             return
-        self.report(*operation, message)
+        self.report(*operation, message, failed=False)
 
-    def report(self, scope, port, error):
+    def report(self, scope, port, error, *, failed=True):
+        # failed=False: an error logged inside an operation that may still complete,
+        # e.g. one rejected quote page that a fallback covers.
         message = error_message(error)
         with self._state_lock:
             self._sequence += 1
@@ -70,7 +72,7 @@ class OpenDStatus(logging.Handler):
                 'scope': scope, 'host': self.host, 'port': port,
                 'message': message, 'hint': error_hint(message),
                 'occurred_at': datetime.now(timezone.utc).isoformat(),
-                '_sequence': self._sequence,
+                '_sequence': self._sequence, '_failed': failed,
             }
 
     def clear(self, scope, port):
@@ -79,8 +81,13 @@ class OpenDStatus(logging.Handler):
 
     def errors(self):
         with self._state_lock:
-            return [{key: value for key, value in error.items() if key != '_sequence'}
+            return [{key: value for key, value in error.items() if not key.startswith('_')}
                     for error in self._errors.values()]
+
+    def failed(self):
+        """True while an operation's latest run did not complete."""
+        with self._state_lock:
+            return any(error['_failed'] for error in self._errors.values())
 
     @contextmanager
     def operation(self, scope, port=None):
@@ -93,8 +100,12 @@ class OpenDStatus(logging.Handler):
         except Exception as error:
             # Keep the SDK's concrete cause instead of a generic retry timeout.
             with self._state_lock:
-                current = self._errors.get((scope, port), {}).get('_sequence', 0)
-            if current <= sequence:
+                logged = self._errors.get((scope, port))
+                if logged and logged['_sequence'] > sequence:
+                    logged['_failed'] = True
+                else:
+                    logged = None
+            if logged is None:
                 self.report(scope, port, error)
             raise
         else:

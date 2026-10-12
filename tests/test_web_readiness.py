@@ -38,6 +38,27 @@ class ReadinessTests(unittest.TestCase):
         self.backend.options_done_at_by_port = {}
         self.assertFalse(self.backend.get_readiness()["ok"])
 
+    def test_rejected_query_with_fresh_data_stays_ready(self):
+        # One rejected quote page that a fallback covered: data keeps refreshing.
+        self.backend.status.report('prices', 11111, 'Unknown stock. TCH', failed=False)
+        self.assertTrue(self.backend.get_readiness()["ok"])
+        connection = self.backend.get_connection_status()
+        self.assertEqual(connection['state'], 'degraded')
+        self.assertIn('Unknown stock', connection['errors'][0]['message'])
+        routes = {route.path: route for route in create_app(self.backend, 5).routes}
+        self.assertEqual(routes["/readyz"].endpoint().status_code, 200)
+
+    def test_failed_operation_is_unready_before_data_goes_stale(self):
+        self.backend.status.report('positions', 11111, 'must be encrypted')
+        self.assertFalse(self.backend.get_readiness()["ok"])
+        self.assertEqual(self.backend.get_connection_status()['state'], 'error')
+
+    def test_rejected_query_does_not_hide_stale_data(self):
+        self.backend.status.report('prices', 11111, 'Unknown stock. TCH', failed=False)
+        self.backend.price_success_at["US.TSLA"] = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        self.assertFalse(self.backend.get_readiness()["ok"])
+        self.assertEqual(self.backend.get_connection_status()['state'], 'error')
+
     def test_stopped_backend_is_not_ready(self):
         self.backend.stop_event.set()
         self.assertFalse(self.backend.get_readiness()["ok"])

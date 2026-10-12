@@ -407,7 +407,11 @@ class OptionDashboardBackend:
         }
 
     def get_readiness(self):
-        """Successful position polls and per-underlying price retrieval, not price movement."""
+        """Successful position polls and per-underlying price retrieval, not price movement.
+
+        A logged error does not make fresh data unready: only an operation that
+        failed outright does, without waiting for its data to go stale.
+        """
         now = datetime.now(timezone.utc)
 
         def fresh(stamp, limit):
@@ -432,7 +436,7 @@ class OptionDashboardBackend:
             )
         return {
             "ok": positions_ok and prices_ok and self.initialized
-                  and not self.stop_event.is_set() and not self.status.errors(),
+                  and not self.stop_event.is_set() and not self.status.failed(),
             "positions_ok": positions_ok,
             "prices_ok": prices_ok,
             "empty": not codes,
@@ -441,7 +445,9 @@ class OptionDashboardBackend:
     def get_connection_status(self):
         errors = self.status.errors()
         readiness = self.get_readiness()
-        state = ('error' if errors else 'starting' if not self.initialized
+        # degraded: something was rejected, but positions and prices still refresh.
+        state = ('degraded' if errors and readiness['ok']
+                 else 'error' if errors else 'starting' if not self.initialized
                  else 'ready' if readiness['ok'] else 'stale')
         return {'state': state, 'host': self.host, 'ports': self.ports,
                 'errors': errors, 'positions_ok': readiness['positions_ok'],

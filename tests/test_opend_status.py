@@ -80,6 +80,40 @@ class OpenDStatusTests(unittest.TestCase):
                 raise RuntimeError('retry timeout')
         self.assertIn('must be encrypted', status.errors()[0]['message'])
 
+    def test_logged_error_in_completed_operation_is_not_a_failure(self):
+        status = OpenDStatus('host', [11111])
+        status.capture_logs()
+        self.addCleanup(status.detach)
+        with status.operation('prices', 11111):
+            logging.getLogger('opdash.core').error('get_market_snapshot stock prices failed: -1, Unknown stock. TCH')
+        self.assertIn('Unknown stock', status.errors()[0]['message'])
+        self.assertNotIn('_failed', status.errors()[0])
+        self.assertFalse(status.failed())
+        with status.operation('prices', 11111):
+            pass
+        self.assertEqual(status.errors(), [])
+
+    def test_raised_operation_is_a_failure_and_keeps_logged_cause(self):
+        status = OpenDStatus('host', [11111])
+        status.capture_logs()
+        self.addCleanup(status.detach)
+        with self.assertRaises(RuntimeError):
+            with status.operation('positions', 11111):
+                logging.getLogger('opdash.core').error('query_hold_positions error: must be encrypted')
+                raise RuntimeError('retry timeout')
+        self.assertIn('must be encrypted', status.errors()[0]['message'])
+        self.assertTrue(status.failed())
+        with self.assertRaises(RuntimeError):
+            with status.operation('prices', 11111):
+                raise RuntimeError('quote context closed')
+        self.assertEqual(len(status.errors()), 2)
+        with status.operation('positions', 11111):
+            pass
+        self.assertTrue(status.failed())
+        with status.operation('prices', 11111):
+            pass
+        self.assertFalse(status.failed())
+
     def test_secrets_redacted_and_message_bounded(self):
         text = error_message('password=secret token=abc -----BEGIN RSA PRIVATE KEY-----\nsecret\n-----END RSA PRIVATE KEY-----')
         self.assertNotIn('secret', text)

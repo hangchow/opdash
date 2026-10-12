@@ -965,6 +965,7 @@ function updateOpenDStatus(connection) {
   banner.dataset.state = connection.state;
   const titles = {
     error: "OpenD 访问失败",
+    degraded: "OpenD 部分查询失败",
     starting: "正在连接 OpenD",
     stale: "OpenD 数据尚未更新",
     unreachable: "无法刷新仪表盘",
@@ -975,6 +976,8 @@ function updateOpenDStatus(connection) {
   const summary = document.createElement("p");
   summary.textContent = connection.state === "starting"
     ? "正在连接并加载持仓、行情；连接失败时会在此显示原因，系统会自动重试。"
+    : connection.state === "degraded"
+    ? "持仓和行情仍在正常更新；以下查询失败，相关数据可能不完整。恢复后此提示会自动清除。"
     : "持仓或行情更新受影响，现有图表可能是旧数据。恢复后此提示会自动清除。";
   banner.append(summary);
   const scopes = { configuration: "加密配置", connection: "连接 / 握手", startup: "初始化", positions: "持仓 / 期权查询", prices: "行情查询" };

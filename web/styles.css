@@ -110,6 +110,7 @@ body {
 }
 
 .opend-status[data-state="starting"],
+.opend-status[data-state="degraded"],
 .opend-status[data-state="stale"] {
   border-color: #fbbf24;
   color: #78350f;
