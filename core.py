@@ -40,6 +40,9 @@ _CHANGE_FIELDS_BY_PRICE_FIELD = {   # 价格字段 -> 同源的 (涨跌额, 涨�
     "overnight_price": ("overnight_change_val", "overnight_change_rate"),
 }
 HK_NUMERIC_STOCK_CODE_RE = re.compile(r"^HK\.(\d{1,5})$", re.IGNORECASE)
+UNKNOWN_STOCK_RE = re.compile(r"Unknown stock\.?\s*([A-Z0-9.]+)", re.IGNORECASE)
+UNKNOWN_STOCK_COOLDOWN = 600    # OpenD 判为未知的正股代码跳过这么多秒，到期再试一次
+_unknown_stock_until = {}       # 正股快照代码 -> 跳过到的 time.monotonic()
 
 
 def bind_parser_error_handler(parser):
@@ -926,16 +929,26 @@ def _build_stock_code_targets(stock_codes):
     return code_targets
 
 
+def _code_market(raw_code):
+    market, separator, _ = normalize_stock_code(raw_code).partition(".")
+    return market if separator else None
+
+
 def _resolve_stock_targets(raw_code, code_targets, stock_alias_map=None):
+    # 裸代码别名（MET）同时命中 HK.MET 和 US.MET：带市场前缀的代码只归到同市场的标的，
+    # 否则美团期权会混进大都会人寿的面板，并把面板的正股换成 HK.03690
+    market = _code_market(raw_code)
     resolved = []
     expanded_aliases = set(_stock_code_aliases(raw_code))
     for alias in list(expanded_aliases):
         if stock_alias_map:
             expanded_aliases.update(stock_alias_map.get(alias, set()))
     for alias in expanded_aliases:
-        targets = code_targets.get(alias)
-        if targets:
-            resolved.extend(targets)
+        for target in code_targets.get(alias) or ():
+            target_market = _code_market(target)
+            if market and target_market and target_market != market:
+                continue
+            resolved.append(target)
     return list(dict.fromkeys(resolved))
 
 
@@ -1269,6 +1282,32 @@ def _stock_snapshot_code(stock_code, stock_owner=None):
     return code
 
 
+def _get_stock_snapshot_page(quote_ctx, page_codes, quote_lock=None):
+    # 其它未知代码（指数期权根代码、退市代码）同样会拖垮整页。OpenD 只点名第一个，
+    # 且不带市场（"Unknown stock. SPXW"）：剔除被点名的代码重查本页，并跳过一段时间，
+    # 免得每轮都多花一次快照限频额度
+    while True:
+        if quote_lock is None:
+            ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+        else:
+            with quote_lock:
+                ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+        if ret_code == RET_OK:
+            return ret_code, datas
+        matched = UNKNOWN_STOCK_RE.search(str(datas))
+        symbol = matched.group(1).upper() if matched else None
+        unknown = [code for code in page_codes if code.partition(".")[2] == symbol]
+        if not unknown:
+            return ret_code, datas
+        logger.warning(f"get_market_snapshot skipping unknown stock code: {','.join(unknown)}")
+        if len(unknown) == 1:
+            # 同名代码在多个市场时分不清是哪个未知，只本次剔除，不跳过
+            _unknown_stock_until[unknown[0]] = time.monotonic() + UNKNOWN_STOCK_COOLDOWN
+        page_codes = [code for code in page_codes if code not in unknown]
+        if not page_codes:
+            return ret_code, datas
+
+
 def _get_stock_prices_from_snapshot_batch(
     quote_ctx, stock_codes, price_mode="implied", market_state=None, quote_lock=None,
     stock_owner_map=None,
@@ -1278,9 +1317,10 @@ def _get_stock_prices_from_snapshot_batch(
     prices = {}
     changes = {}
     quote_targets = {}
+    now = time.monotonic()
     for stock_code in dict.fromkeys(code for code in stock_codes if code):
         quote_code = _stock_snapshot_code(stock_code, (stock_owner_map or {}).get(stock_code))
-        if quote_code:
+        if quote_code and _unknown_stock_until.get(quote_code, 0) <= now:
             quote_targets.setdefault(quote_code, []).append(stock_code)
     unique_codes = list(quote_targets)
     if not unique_codes:
@@ -1296,11 +1336,7 @@ def _get_stock_prices_from_snapshot_batch(
     page_size = 300
     for offset in range(0, len(unique_codes), page_size):
         page_codes = unique_codes[offset:offset + page_size]
-        if quote_lock is None:
-            ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
-        else:
-            with quote_lock:
-                ret_code, datas = quote_ctx.get_market_snapshot(page_codes)
+        ret_code, datas = _get_stock_snapshot_page(quote_ctx, page_codes, quote_lock=quote_lock)
         if ret_code != RET_OK:
             logger.error(f"get_market_snapshot stock prices failed: {ret_code}, {datas}")
             continue

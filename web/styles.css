@@ -235,6 +235,11 @@ body.chart-fullscreen-active {
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
 }
 
+.card.card-fullscreen.card-breached {
+  border-color: #ea580c;
+  box-shadow: 0 0 0 1px #ea580c, 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+
 .card.card-fullscreen .chart {
   height: calc(100vh - 48px);
 }

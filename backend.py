@@ -475,6 +475,10 @@ class OptionDashboardBackend:
                         quote_lock=quote_lock,
                         stock_owner_map=stock_owner_snapshot,
                     )
+                    if self.stock_codes and not prices:
+                        # 被拒的查询只记日志不抛错；一个价格都没拿到就算本轮失败，
+                        # 否则要等数据过期（90 秒）才不就绪，期间横幅还说行情正常更新
+                        raise RuntimeError("no stock price retrieved for any underlying")
                     if prices:
                         price_done_at = datetime.now(timezone.utc).isoformat()
                         with self.price_lock:

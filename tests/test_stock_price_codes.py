@@ -3,10 +3,13 @@ import unittest
 from unittest.mock import Mock, patch
 
 import pandas as pd
+from futu import OptionType
 
+import core
 from backend import OptionDashboardBackend
 from core import (RET_OK, _get_stock_prices_from_snapshot_batch,
-                  _get_stock_prices_with_fallback, _stock_snapshot_code)
+                  _get_stock_prices_with_fallback, _group_option_positions_by_stock_codes,
+                  _stock_snapshot_code)
 
 SNAPSHOT_ROWS = {
     'HK.00700': {'code': 'HK.00700', 'last_price': 426.0, 'prev_close_price': 420.0},
@@ -25,6 +28,10 @@ def make_quote_ctx():
 
 
 class StockSnapshotCodeTests(unittest.TestCase):
+    def setUp(self):
+        core._unknown_stock_until.clear()
+        self.addCleanup(core._unknown_stock_until.clear)
+
     def test_owner_replaces_option_class_code(self):
         self.assertEqual(_stock_snapshot_code('HK.TCH', 'HK.00700'), 'HK.00700')
         self.assertEqual(_stock_snapshot_code('HK.TCH', 'HK.700'), 'HK.00700')
@@ -67,6 +74,58 @@ class StockSnapshotCodeTests(unittest.TestCase):
         self.assertEqual(implied.call_args.args[1], {'HK.TCH': 'HK.TCH261127C460000'})
         self.assertEqual(prices, {'HK.TCH': 425.8, 'US.BMY': 57.0})
         self.assertEqual(list(changes), ['US.BMY'])
+
+
+    def test_unknown_code_is_dropped_and_skipped_without_failing_page(self):
+        quote_ctx = make_quote_ctx()
+        prices, _ = _get_stock_prices_from_snapshot_batch(
+            quote_ctx, ['US.SPXW', 'US.BMY'], price_mode='last',
+        )
+        self.assertEqual(prices, {'US.BMY': 57.0})
+        self.assertEqual([c.args[0] for c in quote_ctx.get_market_snapshot.call_args_list],
+                         [['US.SPXW', 'US.BMY'], ['US.BMY']])
+
+        # Later rounds skip the unknown code instead of paying for a rejected page.
+        quote_ctx.get_market_snapshot.reset_mock()
+        _get_stock_prices_from_snapshot_batch(quote_ctx, ['US.SPXW', 'US.BMY'], price_mode='last')
+        quote_ctx.get_market_snapshot.assert_called_once_with(['US.BMY'])
+
+        # The skip expires, so a code that becomes valid is quoted again.
+        with patch('core.time.monotonic', return_value=core.time.monotonic() + core.UNKNOWN_STOCK_COOLDOWN + 1):
+            quote_ctx.get_market_snapshot.reset_mock()
+            _get_stock_prices_from_snapshot_batch(quote_ctx, ['US.SPXW', 'US.BMY'], price_mode='last')
+        self.assertEqual(quote_ctx.get_market_snapshot.call_args_list[0].args[0], ['US.SPXW', 'US.BMY'])
+
+    def test_other_rejections_are_not_retried(self):
+        quote_ctx = Mock(get_market_snapshot=Mock(return_value=(-1, 'Request too frequent')))
+        prices, _ = _get_stock_prices_from_snapshot_batch(quote_ctx, ['US.BMY'], price_mode='last')
+        self.assertEqual(prices, {})
+        quote_ctx.get_market_snapshot.assert_called_once_with(['US.BMY'])
+        self.assertEqual(core._unknown_stock_until, {})
+
+
+class CrossMarketGroupingTests(unittest.TestCase):
+    def test_same_symbol_in_two_markets_stays_in_its_own_panel(self):
+        # Meituan's HK option class code MET and MetLife's US ticker MET share the bare alias.
+        meituan = {'code': 'HK.MET261127C150000', 'stock_owner': 'HK.03690',
+                   'stock_code_hint': 'HK.MET', 'type': OptionType.CALL,
+                   'strike_date': '2026-11-27', 'strike_price': 150.0}
+        metlife = {'code': 'US.MET261120C80000', 'stock_owner': 'US.MET',
+                   'stock_code_hint': 'US.MET', 'type': OptionType.CALL,
+                   'strike_date': '2026-11-20', 'strike_price': 80.0}
+        options_map = _group_option_positions_by_stock_codes([meituan, metlife], ['HK.MET', 'US.MET'])
+        self.assertEqual({code: [o['code'] for o in options] for code, options in options_map.items()},
+                         {'HK.MET': [meituan['code']], 'US.MET': [metlife['code']]})
+        self.assertEqual(OptionDashboardBackend._stock_owners(options_map),
+                         {'HK.MET': 'HK.03690', 'US.MET': 'US.MET'})
+
+    def test_class_code_still_groups_under_its_hk_panel(self):
+        tencent = {'code': 'HK.TCH261127C460000', 'stock_owner': 'HK.00700',
+                   'stock_code_hint': 'HK.TCH', 'type': OptionType.CALL,
+                   'strike_date': '2026-11-27', 'strike_price': 460.0}
+        options_map = _group_option_positions_by_stock_codes([tencent], ['HK.TCH', 'US.BMY'])
+        self.assertEqual([o['code'] for o in options_map['HK.TCH']], [tencent['code']])
+        self.assertEqual(options_map['US.BMY'], [])
 
 
 class BackendStockOwnerTests(unittest.TestCase):
@@ -119,6 +178,24 @@ class BackendStockOwnerTests(unittest.TestCase):
             backend.start()
         self.assertEqual(get_prices.call_args.kwargs['stock_owner_map'], {'HK.TCH': 'HK.00700'})
         self.assertEqual(backend.latest_stock_owner, {'HK.TCH': 'HK.00700'})
+
+    def test_price_round_with_no_price_at_all_fails_immediately(self):
+        # Every quote page was rejected: only logs, no exception, and nothing refreshed.
+        def rejected(*args, **kwargs):
+            core.logger.error('get_market_snapshot stock prices failed: -1, Unknown stock. TCH')
+            return {}, {}
+        backend = self.make_backend(Mock(return_value={}), Mock(side_effect=rejected))
+        backend.status.capture_logs()
+        self.addCleanup(backend.status.detach)
+        self.poll_once(backend, backend._poll_price_all, 11111, 1)
+        self.assertTrue(backend.status.failed())
+        self.assertIn('Unknown stock', backend.status.errors()[0]['message'])
+
+        # The next round that prices every underlying clears it.
+        backend.get_stock_prices_with_fallback = Mock(return_value=({'HK.TCH': 426.0}, {}))
+        self.poll_once(backend, backend._poll_price_all, 11111, 1)
+        self.assertFalse(backend.status.failed())
+        self.assertEqual(backend.status.errors(), [])
 
     def test_closed_position_drops_owner(self):
         backend = self.make_backend(Mock(return_value={}), Mock(return_value=({}, {})))
