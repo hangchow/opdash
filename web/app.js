@@ -1,4 +1,9 @@
 const PL_LABEL_GAP_PX = 5; // 标记边缘到盈亏文字的像素间距
+const PRICE_LABEL_PAD_PX = 4; // 股价文字与虚线、面板边缘的像素间距
+const PRICE_LABEL_HEIGHT_PX = 14; // 11px 股价文字的行高估算
+const PL_LABEL_HEIGHT_PX = 13; // 10px 盈亏文字的行高估算
+const PRICE_LABEL_HALO = "-1px -1px 1px #fff, 1px -1px 1px #fff, -1px 1px 1px #fff, 1px 1px 1px #fff";
+const PLOTLY_FONT_FAMILY = '"Open Sans", verdana, arial, sans-serif';
 let initialized = false;
 let lastStockCodesVersion = null;
 let refreshTimer = null;
@@ -697,6 +702,51 @@ function buildGrid(snapshot) {
   });
 }
 
+let textMeasureCtx = null;
+
+function measureTextPx(text, fontSize) {
+  textMeasureCtx ||= document.createElement("canvas").getContext("2d");
+  textMeasureCtx.font = `${fontSize}px ${PLOTLY_FONT_FAMILY}`;
+  return textMeasureCtx.measureText(text).width;
+}
+
+// Plotly 渲染前拿不到真实坐标轴，按面板尺寸和已定的坐标范围估算绘图区内的像素位置
+// （原点在绘图区左上角）；y 轴 automargin 撑宽时会有几像素误差，避让判断够用
+function makePlotPxEstimator(chartEl, margin, xRange, yRange) {
+  const width = (chartEl?.clientWidth || 0) - margin.l - margin.r;
+  const height = (chartEl?.clientHeight || 0) - margin.t - margin.b;
+  const yValid = Array.isArray(yRange) && yRange[1] > yRange[0];
+  if (width <= 0 || height <= 0 || !yValid) {
+    return () => null;
+  }
+  const xMin = xRange ? xRange[0].getTime() : 0;
+  const xSpan = xRange ? xRange[1].getTime() - xMin : 0;
+  return (date, price) => ({
+    width,
+    x: xSpan > 0 && date !== null ? ((new Date(date).getTime() - xMin) / xSpan) * width : 0,
+    y: ((yRange[1] - price) / (yRange[1] - yRange[0])) * height,
+  });
+}
+
+// 股价文字默认在虚线上方；上方压到期权标记或盈亏文字、而下方更空时改放下方
+function priceLabelYAnchor(toPlotPx, price, text, isLeftColumn, occupied) {
+  const line = toPlotPx(null, price);
+  if (!line) {
+    return "bottom";
+  }
+  const textWidth = measureTextPx(text, 11);
+  const left = isLeftColumn ? PRICE_LABEL_PAD_PX : line.width - PRICE_LABEL_PAD_PX - textWidth;
+  const right = left + textWidth;
+  const reach = PRICE_LABEL_PAD_PX + PRICE_LABEL_HEIGHT_PX;
+  const hits = (top, bottom) =>
+    occupied.filter((b) => b.x1 > left && b.x0 < right && b.y1 > top && b.y0 < bottom).length;
+  const above = hits(line.y - reach, line.y);
+  if (above === 0) {
+    return "bottom";
+  }
+  return hits(line.y, line.y + reach) < above ? "top" : "bottom";
+}
+
 function renderPanel(id, panel) {
   const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
@@ -761,16 +811,27 @@ function renderPanel(id, panel) {
     });
   }
 
+  const margin = isLeftColumn
+    ? { l: 70, r: 20, t: 58, b: 92 }
+    : { l: 36, r: 70, t: 58, b: 92 };
+  const chartEl = document.getElementById(id);
+  const toPlotPx = makePlotPxEstimator(chartEl, margin, xRange, yRange);
+
   const shapes = [];
   const annotations = [];
+  const occupied = []; // 期权标记及其盈亏文字的像素框，股价文字据此避让
   // 盈亏标注用 annotation 而非 text trace：xshift 能按标记半径给出精确像素间距，
   // 且 marker trace 的 text 字段已被悬停提示占用
   options.forEach((option, index) => {
+    const radius = Number(option.marker_size || 0) / 2;
+    const center = toPlotPx(xVals[index], yVals[index]);
+    if (center) {
+      occupied.push({ x0: center.x - radius, x1: center.x + radius, y0: center.y - radius, y1: center.y + radius });
+    }
     const label = plLabels[index];
     if (!label) {
       return;
     }
-    const radius = Number(option.marker_size || 0) / 2;
     const gap = radius + PL_LABEL_GAP_PX;
     // 贴近右边界的点改标在左侧，否则文字会被面板裁掉
     let onRightEdge = false;
@@ -781,6 +842,12 @@ function renderPanel(id, panel) {
       if (span > 0) {
         onRightEdge = (new Date(xVals[index]).getTime() - x0) / span > 0.82;
       }
+    }
+    if (center) {
+      const width = measureTextPx(label, 10);
+      const left = onRightEdge ? center.x - gap - width : center.x + gap;
+      const halfHeight = PL_LABEL_HEIGHT_PX / 2;
+      occupied.push({ x0: left, x1: left + width, y0: center.y - halfHeight, y1: center.y + halfHeight });
     }
     annotations.push({
       x: xVals[index],
@@ -796,31 +863,33 @@ function renderPanel(id, panel) {
   });
   if (panel.stock_price !== null && panel.stock_price !== undefined) {
     const y0 = Number(panel.stock_price.toFixed(2));
+    // 后端已按当前时段算好同源涨跌，缺数据时退化为纯价格
+    const priceText =
+      typeof panel.stock_price_label === "string" && panel.stock_price_label
+        ? panel.stock_price_label
+        : y0.toFixed(2);
+    // 价格文字挂在虚线 shape 上而非 annotation：annotation 永远画在 trace 之上，
+    // 会盖住价格附近的期权标记；"between" 层在网格线之上、trace 之下。
+    // xref 不能用 "paper"（Plotly 会把 paper 坐标的 shape 一律放到网格线下面），
+    // "x domain" 配 "between" 在 2.35 会抛错，只能用数据坐标覆盖整个已定的 x 范围
     shapes.push({
       type: "line",
-      xref: "paper",
-      x0: 0,
-      x1: 1,
+      layer: "between",
+      xref: "x",
+      x0: xRange ? xRange[0] : 0,
+      x1: xRange ? xRange[1] : 1,
       y0,
       y1: y0,
       line: { color: "red", width: 1, dash: "dash" },
-    });
-    annotations.push({
-      xref: "paper",
-      x: isLeftColumn ? 0.01 : 0.99,
-      y: y0,
-      xanchor: isLeftColumn ? "left" : "right",
-      yanchor: "middle",
-      // 后端已按当前时段算好同源涨跌，缺数据时退化为纯价格
-      text:
-        typeof panel.stock_price_label === "string" && panel.stock_price_label
-          ? panel.stock_price_label
-          : y0.toFixed(2),
-      showarrow: false,
-      font: { color: "red", size: 11 },
-      bgcolor: "#ffffff",
-      borderpad: 1,
-      yshift: 10,
+      label: {
+        text: priceText,
+        // 白色描边代替原来的不透明底色：盖住穿过文字的网格线，又不挡住上层的期权标记
+        font: { color: "red", size: 11, shadow: PRICE_LABEL_HALO },
+        textposition: isLeftColumn ? "start" : "end",
+        xanchor: isLeftColumn ? "left" : "right",
+        yanchor: priceLabelYAnchor(toPlotPx, y0, priceText, isLeftColumn, occupied),
+        padding: PRICE_LABEL_PAD_PX,
+      },
     });
   }
 
@@ -856,9 +925,7 @@ function renderPanel(id, panel) {
   const layout = {
     template: "none",
     title: { text: titleText, x: 0.5, xanchor: "center", font: { size: 14 } },
-    margin: isLeftColumn
-      ? { l: 70, r: 20, t: 58, b: 92 }
-      : { l: 36, r: 70, t: 58, b: 92 },
+    margin,
     xaxis: {
       // Plotly falls back to epoch dates when a date axis has no data. Hide the
       // empty x-axis so a price-only panel does not display bogus 2000 dates.
@@ -891,7 +958,6 @@ function renderPanel(id, panel) {
   };
 
   const config = { responsive: true, displaylogo: false };
-  const chartEl = document.getElementById(id);
   chartEl.closest(".card")?.classList.toggle("card-breached", breachedCount > 0);
   Plotly.react(id, traces, layout, config).then(() => {
     bindOptionTooltip(chartEl);

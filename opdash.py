@@ -638,8 +638,9 @@ def plot_chart(
     put_facecolors = plot_data["put_facecolors"]
     point_counts = plot_data["point_counts"]
 
-    call_sc = ax.scatter(call_x, call_y, edgecolors=call_edgecolors, facecolors=call_facecolors, s=call_s, marker='o')
-    put_sc = ax.scatter(put_x, put_y, edgecolors=put_edgecolors, facecolors=put_facecolors, s=put_s, marker='^')
+    # 标记压在股价文字（zorder 3，带白底）之上，否则价格附近的期权会被白底挡住
+    call_sc = ax.scatter(call_x, call_y, edgecolors=call_edgecolors, facecolors=call_facecolors, s=call_s, marker='o', zorder=3.5)
+    put_sc = ax.scatter(put_x, put_y, edgecolors=put_edgecolors, facecolors=put_facecolors, s=put_s, marker='^', zorder=3.5)
     unique_dates = plot_data["unique_dates"]
     if unique_dates:
         ax.set_xticks(unique_dates)
