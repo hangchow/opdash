@@ -32,27 +32,38 @@ class DeploymentTests(unittest.TestCase):
         self.state = {"current": self.old, "successful": [self.old]}
 
     def test_success_records_previous_and_clears_transaction(self):
-        with patch.object(d, "control"), patch.object(d, "wait_healthy", return_value=True):
+        with patch.object(d, "control"), patch.object(d, "healthy", return_value=True), patch.object(d, "wait_healthy", return_value=True):
             d.activate(self.state, {}, self.new)
         self.assertEqual(d.linked("current"), self.new)
         self.assertEqual(d.linked("previous"), self.old)
         self.assertNotIn("transaction", d.read_state())
 
     def test_failed_health_restores_old_release(self):
-        with patch.object(d, "control") as control, patch.object(d, "wait_healthy", side_effect=[False, True]):
+        with patch.object(d, "control") as control, patch.object(d, "healthy", return_value=True), patch.object(d, "wait_healthy", side_effect=[False, True]) as wait:
             with self.assertRaisesRegex(RuntimeError, "Candidate"):
                 d.activate(self.state, {}, self.new)
         self.assertEqual(d.linked("current"), self.old)
+        # The old release was ready before the switch, so it must be ready again.
+        self.assertEqual(wait.call_args.kwargs, {"ready": True})
         self.assertEqual(control.call_count, 4)
         self.assertNotIn("transaction", d.read_state())
 
     def test_failed_rollback_pauses_and_preserves_recovery_record(self):
-        with patch.object(d, "control"), patch.object(d, "wait_healthy", return_value=False):
+        with patch.object(d, "control"), patch.object(d, "healthy", return_value=True), patch.object(d, "wait_healthy", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "Rollback"):
                 d.activate(self.state, {}, self.new)
         state = d.read_state()
         self.assertTrue(state["paused"])
         self.assertEqual(state["transaction"]["old"], self.old)
+        self.assertTrue(state["transaction"]["old_ready"])
+
+    def test_one_slow_readyz_does_not_mark_old_release_unready(self):
+        with patch.object(d, "healthy", side_effect=[False, True]) as healthy, patch.object(d.time, "sleep"):
+            self.assertTrue(d.was_ready({}, self.old))
+        self.assertEqual(healthy.call_count, 2)
+        with patch.object(d, "healthy", return_value=False) as healthy, patch.object(d.time, "sleep"):
+            self.assertFalse(d.was_ready({}, self.old))
+        self.assertEqual(healthy.call_count, 3)
 
     def test_interrupted_transaction_recovers_before_next_update(self):
         self.state["transaction"] = {"old": self.old, "target": self.new}
@@ -146,6 +157,24 @@ class DeploymentTests(unittest.TestCase):
     def test_login_probe_timeout_is_dependency_wait(self):
         with patch.object(d, "run", side_effect=d.subprocess.TimeoutExpired("probe", 15)):
             self.assertFalse(d.opend_logged_in({}, self.new))
+
+    def test_logged_out_probe_is_dependency_wait(self):
+        error = RuntimeError(f"/opt/python failed ({d.PROBE_NOT_LOGGED_IN}): ")
+        with patch.object(d, "run", side_effect=error):
+            self.assertFalse(d.opend_logged_in({}, self.new))
+
+    def test_crashed_probe_fails_candidate_instead_of_waiting(self):
+        # The candidate's own SDK cannot finish the probe: record it, do not blame OpenD.
+        def run(args, **kwargs):
+            if args[0] == "git":
+                return self.new
+            raise RuntimeError("/opt/python failed (1): ImportError: cannot import name 'SysConfig'")
+        with patch.object(d, "run", side_effect=run), patch.object(d, "prepare"), patch.object(d, "opend_available", return_value=True), patch.object(d, "control") as control:
+            with self.assertRaisesRegex(RuntimeError, "OpenD probe failed in candidate.*ImportError"):
+                d.update(self.state, {}, False)
+        control.assert_not_called()
+        self.assertEqual(d.linked("current"), self.old)
+        self.assertEqual(d.read_state()["failed"]["stage"], "probe")
 
     def test_login_probe_receives_rsa_key_for_encrypted_opend(self):
         with patch.object(d, "run") as run:

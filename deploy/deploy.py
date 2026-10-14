@@ -140,10 +140,13 @@ def request(cfg, path, json_body=True):
     return json.loads(body) if json_body else body
 
 
+PROBE_NOT_LOGGED_IN = 3  # Exit status the probe reserves for an OpenD that is not logged in.
+
+
 def opend_logged_in(cfg, sha):
     # Asks OpenD directly instead of trusting the current release's /readyz.
     # The SDK may retry login forever: isolate it in a bounded subprocess.
-    probe = """
+    probe = f"""
 import sys
 from futu import OpenQuoteContext, RET_OK, SysConfig
 if sys.argv[3]:
@@ -154,7 +157,7 @@ for port in sys.argv[2].split(','):
     try:
         ret, state = ctx.get_global_state()
         if ret != RET_OK or not (state.get('qot_logined') and state.get('trd_logined')):
-            raise SystemExit(1)
+            raise SystemExit({PROBE_NOT_LOGGED_IN})
     finally:
         ctx.close()
 """
@@ -164,8 +167,14 @@ for port in sys.argv[2].split(','):
              cfg.get("FUTU_RSA_PRIVATE_KEY", "")],
             timeout=15, capture=True)
         return True
-    except (RuntimeError, subprocess.TimeoutExpired):
-        return False
+    except subprocess.TimeoutExpired:
+        return False  # The SDK is still retrying its connection or login.
+    except RuntimeError as error:
+        if f" failed ({PROBE_NOT_LOGGED_IN}): " in str(error):
+            return False
+        # A crash is the candidate's SDK or venv failing, not OpenD: waiting would
+        # stall every timer run behind a log line that blames OpenD.
+        raise RuntimeError(f"OpenD probe failed in candidate: {error}") from None
 
 
 def healthy(cfg, sha, *, full=False, ready=True):
@@ -190,6 +199,17 @@ def healthy(cfg, sha, *, full=False, ready=True):
         return True
     except (OSError, ValueError, KeyError):
         return False
+
+
+def was_ready(cfg, sha, attempts=3):
+    # One /readyz that times out must not mark a ready release unready, which would
+    # relax the rollback check for the whole transaction to /healthz.
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(3)
+        if healthy(cfg, sha):
+            return True
+    return False
 
 
 def wait_healthy(cfg, sha, *, ready=True):
@@ -260,7 +280,7 @@ def restore(state, cfg):
 def activate(state, cfg, sha):
     old = linked("current")
     state["transaction"] = {"old": old, "target": sha,
-                            "old_ready": bool(old) and healthy(cfg, old)}
+                            "old_ready": bool(old) and was_ready(cfg, old)}
     save(state)
     try:
         log(f"activate {sha} (previous {old})")
@@ -314,6 +334,7 @@ def update(state, cfg, retry):
     stage = "prepare"
     try:
         prepare(sha)
+        stage = "probe"
         # Gate on the dependency itself. The current release may be unready because
         # of its own defect, and then the candidate is the fix that must get through.
         if not opend_available(cfg) or not opend_logged_in(cfg, sha):
