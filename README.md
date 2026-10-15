@@ -6,6 +6,7 @@ Options position dashboard and plotting tool.
 
 - `opdash.py`: Matplotlib GUI visualization script (existing)
 - `opdash_web.py`: web dashboard entry
+- `close_short_calls.py`: buy-to-close orders at the bid for one underlying's short calls, skipping contracts already on working orders
 - `backend.py`, `core.py`: shared backend logic for GUI/Web
 - `web/index.html`, `web/styles.css`, `web/app.js`: standalone web page assets
 - `options.py`, `positions.py`: required local modules
