@@ -978,7 +978,6 @@ function renderPanel(id, panel) {
   };
 
   const config = { responsive: true, displaylogo: false };
-  chartEl.closest(".card")?.classList.toggle("card-breached", breachedCount > 0);
   Plotly.react(id, traces, layout, config).then(() => {
     bindOptionTooltip(chartEl);
     bindHoverLabelClamp(chartEl);

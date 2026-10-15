@@ -64,7 +64,7 @@ Official OpenD startup docs:
 - Green: short position
 - Pink: long position
 - Filled markers: `pl_ratio >= profit_highlight_threshold`
-- Orange (Web): a short position that is in the money — the stock price is above a short call's strike or below a short put's strike. The marker turns solid orange, the panel gets an orange border and a `short ITM: N` count in its title, and the hover text shows how far in the money it is. Long positions are not flagged
+- Orange (Web): a short position that is in the money — the stock price is above a short call's strike or below a short put's strike. The marker turns solid orange, the panel title gets a `short ITM: N` count, and the hover text shows how far in the money it is. Long positions are not flagged
 - Red dashed line: underlying stock price
 
 If you pass two ports, charts are shown side by side.
