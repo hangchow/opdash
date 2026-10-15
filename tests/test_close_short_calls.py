@@ -1,5 +1,8 @@
 import contextlib
 import io
+import logging
+from threading import Event
+import time
 import unittest
 from unittest.mock import Mock
 
@@ -8,6 +11,7 @@ from futu import RET_ERROR, RET_OK, TimeInForce, TrdEnv, TrdSide
 
 from close_short_calls import (
     close_short_calls,
+    connect_or_fail,
     normalize_underlying,
     plan_orders,
     resolve_real_acc_id,
@@ -149,6 +153,34 @@ class CloseShortCallsTests(unittest.TestCase):
             run(trade_ctx, make_quote_ctx({CALL_A: 1.0}), unlock=True, prompt=lambda _: "secret")
         trade_ctx.unlock_trade.assert_called_once_with("secret")
         trade_ctx.place_order.assert_not_called()
+
+
+class ConnectTests(unittest.TestCase):
+    def test_first_sdk_connect_failure_ends_the_wait_with_a_hint(self):
+        never = Event()
+
+        def factory():
+            logging.getLogger("FTFileLog").warning(
+                "[open_context_base.py:408] _init_connect_sync: init connect fail: conn=0(1) msg=check sha error!"
+            )
+            never.wait(5)
+
+        started = time.monotonic()
+        try:
+            with self.assertRaises(RuntimeError) as raised:
+                with connect_or_fail(factory, "127.0.0.1:11111", timeout=5):
+                    self.fail("connected")
+        finally:
+            never.set()
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIn("check sha error", str(raised.exception))
+        self.assertIn("--rsa_private_key", str(raised.exception))
+
+    def test_ready_context_is_yielded_and_closed(self):
+        ctx = Mock()
+        with connect_or_fail(lambda: ctx, "127.0.0.1:11111", timeout=5) as connected:
+            self.assertIs(connected, ctx)
+        ctx.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

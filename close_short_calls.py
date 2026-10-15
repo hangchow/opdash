@@ -1,14 +1,17 @@
 """Buy to close every short call on one underlying at the bid, without duplicating working orders."""
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import getpass
 import logging
 import os
 import sys
+from threading import Event, Thread
 import time
 
 import pandas as pd
-from futu import RET_OK, OrderStatus, OrderType, SysConfig, TimeInForce, TrdEnv, TrdSide
+from futu import (RET_OK, OpenQuoteContext, OpenSecTradeContext, OrderStatus, OrderType, SecurityFirm,
+                  SysConfig, TimeInForce, TrdEnv, TrdSide)
 
 from core import (
     _parse_option_code_fields,
@@ -17,9 +20,8 @@ from core import (
     configure_futu_encryption,
     infer_trade_market_filter,
     normalize_stock_code,
-    safe_quote_ctx,
-    safe_trade_ctx,
 )
+from opend_status import error_hint, error_message
 from options import OptionEnum
 
 logger = logging.getLogger("close_short_calls")
@@ -38,6 +40,8 @@ FINAL_ORDER_STATUSES = {
 BUY_SIDES = {TrdSide.BUY, TrdSide.BUY_BACK}  # 服务器把买入平空回报为 BUY_BACK
 GTC_LOOKBACK_DAYS = 30   # 当日订单查不到更早挂出的 GTC 单，往回多查这么多天
 SETTLE_SECONDS = 3.0     # 下单后等这么久再回查订单状态
+CONNECT_TIMEOUT = 30.0   # 等 OpenD 连接就绪的上限秒数
+SDK_CONNECT_FAILURES = ("init connect fail", "connect fail")  # SDK 每次连接失败时日志里的关键字
 
 
 def normalize_underlying(raw_code):
@@ -119,6 +123,57 @@ def query_working_orders(trade_ctx, acc_id, today=None):
     if ret != RET_OK:
         raise RuntimeError(f"history_order_list_query failed: {history}")
     return pd.concat([todays, history], ignore_index=True)
+
+
+class _ConnectFailure(logging.Handler):
+    def __init__(self, event):
+        super().__init__(logging.WARNING)
+        self.event = event
+        self.message = None
+
+    def emit(self, record):
+        message = record.getMessage()
+        if self.message is None and any(text in message.lower() for text in SDK_CONNECT_FAILURES):
+            self.message = message
+            self.event.set()
+
+
+@contextmanager
+def connect_or_fail(factory, description, timeout=CONNECT_TIMEOUT):
+    """Build a futu context, raising on the first failed connect.
+
+    The SDK constructor retries every 6 seconds and never returns while OpenD rejects the
+    connection (for example without the RSA key), so it runs on a daemon thread and the
+    SDK's own failure log ends the wait.
+    """
+    done = Event()
+    failure = _ConnectFailure(done)
+    result = {}
+
+    def build():
+        try:
+            result["ctx"] = factory()
+        except Exception as error:
+            result["error"] = error
+        finally:
+            done.set()
+
+    sdk_logger = logging.getLogger("FTFileLog")
+    sdk_logger.addHandler(failure)
+    try:
+        Thread(target=build, name=f"connect {description}", daemon=True).start()
+        done.wait(timeout)
+    finally:
+        sdk_logger.removeHandler(failure)
+    ctx = result.get("ctx")
+    if ctx is None:
+        reason = failure.message or result.get("error") or f"not ready after {timeout:g}s"
+        message = error_message(reason)
+        raise RuntimeError(f"cannot connect to OpenD {description}: {message}\n{error_hint(message)}")
+    try:
+        yield ctx
+    finally:
+        ctx.close()
 
 
 def close_short_calls(trade_ctx, quote_ctx, underlying, *, acc_id=None, unlock=False, dry_run=False,
@@ -221,9 +276,12 @@ def main(argv=None):
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)-5s - %(message)s")
     args = parse_args(argv)
     SysConfig.set_all_thread_daemon(True)
+    endpoint = f"{args.host}:{args.port}"
     try:
-        with safe_trade_ctx(args.host, args.port, filter_trdmarket=infer_trade_market_filter([args.stock_code])) as trade_ctx, \
-                safe_quote_ctx(args.host, args.port) as quote_ctx:
+        with connect_or_fail(lambda: OpenSecTradeContext(
+                filter_trdmarket=infer_trade_market_filter([args.stock_code]), host=args.host, port=args.port,
+                security_firm=SecurityFirm.FUTUSECURITIES), endpoint) as trade_ctx, \
+                connect_or_fail(lambda: OpenQuoteContext(host=args.host, port=args.port), endpoint) as quote_ctx:
             ok = close_short_calls(trade_ctx, quote_ctx, args.stock_code, acc_id=args.acc_id,
                                    unlock=args.unlock, dry_run=args.dry_run)
     except RuntimeError as error:
