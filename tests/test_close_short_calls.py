@@ -4,15 +4,18 @@ import logging
 from threading import Event
 import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
-from futu import RET_ERROR, RET_OK, TimeInForce, TrdEnv, TrdSide
+from futu import RET_ERROR, RET_OK, OrderStatus, TimeInForce, TrdAccStatus, TrdEnv, TrdSide
 
 from close_short_calls import (
+    CONNECT_FALLBACK_HINT,
+    SDK_LOGGERS,
     close_short_calls,
     connect_or_fail,
     normalize_underlying,
+    parse_args,
     plan_orders,
     resolve_real_acc_id,
     short_call_quantities,
@@ -52,6 +55,15 @@ def make_quote_ctx(bids):
     return ctx
 
 
+@contextlib.contextmanager
+def quiet_sdk_loggers():
+    # futu 的 FTFileLog 写进用户真实的 SDK 日志文件，测试期间换成空的 handler 列表
+    with contextlib.ExitStack() as stack:
+        for name in SDK_LOGGERS:
+            stack.enter_context(patch.object(logging.getLogger(name), "handlers", []))
+        yield
+
+
 def run(trade_ctx, quote_ctx, **kwargs):
     with contextlib.redirect_stdout(io.StringIO()):
         return close_short_calls(trade_ctx, quote_ctx, "US.AAPL", settle_seconds=0, **kwargs)
@@ -87,6 +99,15 @@ class ParsingTests(unittest.TestCase):
         ]
         self.assertEqual(working_buy_quantities(orders(*rows), "US.AAPL"), {CALL_A: 3})
 
+    def test_disabled_order_still_counts_because_it_can_be_re_enabled(self):
+        rows = [("1", CALL_A, TrdSide.BUY_BACK, 2, 0, 1.0, OrderStatus.DISABLED)]
+        self.assertEqual(working_buy_quantities(orders(*rows), "US.AAPL"), {CALL_A: 2})
+
+    def test_hk_numeric_code_is_rejected_because_options_use_class_codes(self):
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["hk.700"])
+
     def test_plan_only_orders_the_uncovered_contracts(self):
         self.assertEqual(plan_orders({CALL_A: 3, CALL_B: 1}, {CALL_A: 1, CALL_B: 2}), {CALL_A: 2})
 
@@ -94,6 +115,14 @@ class ParsingTests(unittest.TestCase):
 class AccountTests(unittest.TestCase):
     def test_single_real_account_is_picked(self):
         self.assertEqual(resolve_real_acc_id(make_trade_ctx([])), ACC_ID)
+
+    def test_disabled_legacy_account_is_not_a_candidate(self):
+        ctx = make_trade_ctx([])
+        ctx.get_acc_list.return_value = (RET_OK, pd.DataFrame([
+            {"acc_id": ACC_ID, "trd_env": TrdEnv.REAL, "acc_status": TrdAccStatus.ACTIVE},
+            {"acc_id": 7, "trd_env": TrdEnv.REAL, "acc_status": TrdAccStatus.DISABLED},
+        ]))
+        self.assertEqual(resolve_real_acc_id(ctx), ACC_ID)
 
     def test_unknown_requested_account_is_rejected(self):
         with self.assertRaises(RuntimeError):
@@ -134,11 +163,36 @@ class CloseShortCallsTests(unittest.TestCase):
         self.assertTrue(run(trade_ctx, make_quote_ctx({})))
         trade_ctx.place_order.assert_not_called()
 
-    def test_dry_run_and_missing_bid_place_nothing(self):
+    def test_dry_run_places_nothing(self):
         trade_ctx = make_trade_ctx([(CALL_A, -1), (CALL_B, -1)])
         self.assertTrue(run(trade_ctx, make_quote_ctx({CALL_A: 1.0, CALL_B: 1.0}), dry_run=True))
-        self.assertTrue(run(trade_ctx, make_quote_ctx({CALL_A: 0.0, CALL_B: float("nan")})))
         trade_ctx.place_order.assert_not_called()
+
+    def test_missing_bid_places_nothing_and_reports_failure(self):
+        trade_ctx = make_trade_ctx([(CALL_A, -1), (CALL_B, -1)])
+        self.assertFalse(run(trade_ctx, make_quote_ctx({CALL_A: 0.0, CALL_B: float("nan")})))
+        trade_ctx.place_order.assert_not_called()
+
+    def test_orders_are_read_before_positions(self):
+        # 两次查询之间成交的单，按这个顺序只会少补，不会重复下单
+        trade_ctx = make_trade_ctx([(CALL_A, -1)])
+        run(trade_ctx, make_quote_ctx({CALL_A: 1.0}), dry_run=True)
+        names = [call[0] for call in trade_ctx.method_calls]
+        self.assertLess(names.index("history_order_list_query"), names.index("position_list_query"))
+
+    def test_order_rejected_after_placement_reports_failure(self):
+        trade_ctx = make_trade_ctx([(CALL_A, -1)])
+        trade_ctx.order_list_query.side_effect = [
+            (RET_OK, orders()),
+            (RET_OK, orders(("new-" + CALL_A, CALL_A, TrdSide.BUY_BACK, 1, 0, 1.0, OrderStatus.FAILED))),
+        ]
+        self.assertFalse(run(trade_ctx, make_quote_ctx({CALL_A: 1.0})))
+
+    def test_status_query_failure_after_placement_keeps_success(self):
+        trade_ctx = make_trade_ctx([(CALL_A, -1)])
+        trade_ctx.order_list_query.side_effect = [(RET_OK, orders()), (RET_ERROR, "rate limited")]
+        self.assertTrue(run(trade_ctx, make_quote_ctx({CALL_A: 1.0})))
+        trade_ctx.place_order.assert_called_once()
 
     def test_rejected_order_reports_failure(self):
         trade_ctx = make_trade_ctx([(CALL_A, -1)])
@@ -167,7 +221,7 @@ class ConnectTests(unittest.TestCase):
 
         started = time.monotonic()
         try:
-            with self.assertRaises(RuntimeError) as raised:
+            with quiet_sdk_loggers(), self.assertRaises(RuntimeError) as raised:
                 with connect_or_fail(factory, "127.0.0.1:11111", timeout=5):
                     self.fail("connected")
         finally:
@@ -175,6 +229,23 @@ class ConnectTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 2)
         self.assertIn("check sha error", str(raised.exception))
         self.assertIn("--rsa_private_key", str(raised.exception))
+
+    def test_timeout_gives_a_hint_for_a_one_shot_script(self):
+        never = Event()
+        try:
+            with quiet_sdk_loggers(), self.assertRaises(RuntimeError) as raised:
+                with connect_or_fail(lambda: never.wait(5), "127.0.0.1:11111", timeout=0.1):
+                    self.fail("connected")
+        finally:
+            never.set()
+        self.assertIn(CONNECT_FALLBACK_HINT, str(raised.exception))
+
+    def test_close_failure_does_not_hide_the_original_error(self):
+        ctx = Mock()
+        ctx.close.side_effect = OSError("socket closed")
+        with self.assertLogs("close_short_calls", "WARNING"), self.assertRaises(RuntimeError):
+            with connect_or_fail(lambda: ctx, "127.0.0.1:11111", timeout=5):
+                raise RuntimeError("get_market_snapshot failed")
 
     def test_ready_context_is_yielded_and_closed(self):
         ctx = Mock()

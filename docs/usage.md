@@ -216,9 +216,11 @@ http://127.0.0.1:18080
 the current bid. It places real orders on the real account, so try `--dry_run` first.
 
 - Contracts already on working buy orders are not ordered again. Working orders come from
-  today's order list plus the last 30 days of history, so GTC orders from earlier days count.
-  Partially filled orders count only their unfilled quantity, and run the script again
-  any time to top up only what is missing
+  today's order list plus a year of history, so GTC (up to 90 days) and GTD orders from
+  earlier days count, and so do disabled HK orders, which can be re-enabled. Partially
+  filled orders count only their unfilled quantity, and run the script again any time to
+  top up only what is missing. Orders are read before positions, so a close order that
+  fills mid-run leads to ordering too few, never a duplicate
 - Calls with no bid (for example, outside market hours) are skipped
 - Raise prices yourself in the Futu app; the script does not chase the market
 
@@ -230,11 +232,11 @@ python close_short_calls.py stock_code [--host HOST] [--port PORT] [--rsa_privat
 
 ### Arguments
 
-- `stock_code`: required underlying such as `US.AAPL` or `HK.TCH`; a code without a market prefix is treated as US (`AAPL` -> `US.AAPL`). HK option class codes are used as they appear in option codes (`HK.TCH`, not `HK.00700`)
+- `stock_code`: required underlying as it appears in option codes, such as `US.AAPL` or `HK.TCH`; a code without a market prefix is treated as US (`AAPL` -> `US.AAPL`). HK numeric stock codes such as `HK.00700` are rejected: pass the option class code (`HK.TCH`)
 - `--host`: Futu host, default `127.0.0.1`
 - `--port`: one Futu port, default `11111`
 - `--rsa_private_key`: shared RSA private-key file; defaults to `FUTU_RSA_PRIVATE_KEY` if set
-- `--acc_id`: real trading account id; needed only when OpenD has more than one real account. The account is printed masked
+- `--acc_id`: real trading account id; needed only when OpenD has more than one active real account. The account is printed masked
 - `--unlock`: prompt for the trade password and unlock trading on OpenD first. The password is read without echo and is never stored
 - `--dry_run`: print the orders without placing them
 
@@ -246,7 +248,10 @@ python close_short_calls.py AAPL --unlock
 python close_short_calls.py HK.TCH --host 192.168.10.1 --rsa_private_key ~/.config/futu/futu-opend-rsa.pem
 ```
 
-The exit status is non-zero when an order is rejected or a query fails.
+The exit status is non-zero when a short call is left without a close order (no bid, or the
+order is rejected or cancelled within a few seconds of placing it), when OpenD cannot be
+reached, or when a query fails before ordering. A connection failure, such as a missing
+`--rsa_private_key` on an encrypted OpenD, stops the script with a hint instead of retrying.
 
 ## Troubleshooting
 
