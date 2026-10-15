@@ -18,6 +18,8 @@ const LEGEND_SHORT_COLOR = "rgb(0, 153, 0)";
 const LEGEND_LONG_COLOR = "rgb(255, 104, 181)";
 const LEGEND_HOLLOW_COLOR = "#ffffff";
 const BREACH_COLOR = "rgb(234, 88, 12)"; // 被击穿（价内）的 short 仓位，与后端 BREACH_COLOR 一致
+const EXPIRY_SOON_DAYS = 7; // 距今不超过这么多天（含当天）到期的日期刻度标橙，提醒临期期权
+const EXPIRY_SOON_COLOR = "rgb(249, 115, 22)";
 const Y_RANGE_PAD_RATIO = 0.1;
 const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
 const Y_RANGE_MIN_PAD = 1.0;
@@ -747,6 +749,24 @@ function priceLabelYAnchor(toPlotPx, price, text, isLeftColumn, occupied) {
   return hits(line.y, line.y + reach) < above ? "top" : "bottom";
 }
 
+// 按浏览器本地日历日算距到期天数；每次刷新都重画，跨过午夜后自动更新
+function daysUntilExpiry(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(isoDate));
+  if (!match) {
+    return NaN;
+  }
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const expiry = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Math.round((expiry - today) / (24 * 60 * 60 * 1000));
+}
+
+function formatExpiryTick(isoDate) {
+  return daysUntilExpiry(isoDate) <= EXPIRY_SOON_DAYS
+    ? `<span style="color:${EXPIRY_SOON_COLOR}">${isoDate}</span>`
+    : isoDate;
+}
+
 function renderPanel(id, panel) {
   const isLeftColumn = Number(panel.port_index || 0) === 0;
   const options = panel.options || [];
@@ -936,7 +956,7 @@ function renderPanel(id, panel) {
       type: hasOptions ? "date" : "linear",
       tickmode: hasOptions ? "array" : "auto",
       tickvals: hasOptions ? uniqueDates : undefined,
-      ticktext: hasOptions ? uniqueDates : undefined,
+      ticktext: hasOptions ? uniqueDates.map(formatExpiryTick) : undefined,
       range: hasOptions ? xRange : [0, 1],
       tickangle: -45,
       automargin: false,

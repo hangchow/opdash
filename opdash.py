@@ -57,6 +57,8 @@ from core import (
 from options import OptionEnum
 
 PL_LABEL_GAP_POINTS = 4.0  # 标记边缘到盈亏文字的间距（点）
+EXPIRY_SOON_DAYS = 7  # 距今不超过这么多天（含当天）到期的日期刻度标橙，提醒临期期权
+EXPIRY_SOON_COLOR = "#f97316"
 
 logger = logging.getLogger("opdash")  # 固定日志名，避免显示为 __main__
 
@@ -605,6 +607,25 @@ def _format_panel_title_for_axes(title_text):
     return text
 
 
+def _apply_expiry_ticks(ax, unique_dates):
+    # 每次刷新都按本地日期重算颜色，跨过午夜后自动更新
+    ax.set_xticks(unique_dates)
+    labels = ax.set_xticklabels(
+        [d.strftime("%Y-%m-%d") for d in unique_dates],
+        rotation=45,
+        ha="right",
+        rotation_mode="anchor",
+    )
+    # 刷新会复用旧 Tick 对象（新增的还会复制首个 tick 的颜色），非临期的也要显式改回默认色
+    default_color = plt.rcParams["xtick.labelcolor"]
+    if default_color == "inherit":
+        default_color = plt.rcParams["xtick.color"]
+    today = datetime.date.today()
+    for strike_dt, label in zip(unique_dates, labels):
+        expiring_soon = (strike_dt.date() - today).days <= EXPIRY_SOON_DAYS
+        label.set_color(EXPIRY_SOON_COLOR if expiring_soon else default_color)
+
+
 def _apply_panel_title(ax, title_text, stock_code):
     ax.set_title(
         _format_panel_title_for_axes(title_text or f"{stock_code} Option Positions"),
@@ -643,13 +664,7 @@ def plot_chart(
     put_sc = ax.scatter(put_x, put_y, edgecolors=put_edgecolors, facecolors=put_facecolors, s=put_s, marker='^', zorder=3.5)
     unique_dates = plot_data["unique_dates"]
     if unique_dates:
-        ax.set_xticks(unique_dates)
-        ax.set_xticklabels(
-            [d.strftime("%Y-%m-%d") for d in unique_dates],
-            rotation=45,
-            ha="right",
-            rotation_mode="anchor",
-        )
+        _apply_expiry_ticks(ax, unique_dates)
     ax.set_xlabel("Strike Date")
     ax.set_ylabel("Strike Price" if show_y_label else "")
     if y_ticks_on_right:
@@ -754,13 +769,7 @@ def update_plot(ax, options, state, stock_price=None, stock_share_count=None):
     state["point_counts"].update(plot_data["point_counts"])
     _refresh_visible_hover_annotation(state)
     unique_dates = plot_data["unique_dates"]
-    ax.set_xticks(unique_dates)
-    ax.set_xticklabels(
-        [d.strftime("%Y-%m-%d") for d in unique_dates],
-        rotation=45,
-        ha="right",
-        rotation_mode="anchor",
-    )
+    _apply_expiry_ticks(ax, unique_dates)
     if unique_dates:
         x_min_num = mdates.date2num(min(unique_dates))
         x_max_num = mdates.date2num(max(unique_dates))
