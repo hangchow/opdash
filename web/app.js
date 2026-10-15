@@ -18,7 +18,7 @@ const LEGEND_SHORT_COLOR = "rgb(0, 153, 0)";
 const LEGEND_LONG_COLOR = "rgb(255, 104, 181)";
 const LEGEND_HOLLOW_COLOR = "#ffffff";
 const BREACH_COLOR = "rgb(234, 88, 12)"; // 被击穿（价内）的 short 仓位，与后端 BREACH_COLOR 一致
-const EXPIRY_SOON_DAYS = 7; // 距今不超过这么多天（含当天）到期的日期刻度标橙，提醒临期期权
+const EXPIRY_SOON_DAYS = 7; // 今天算第 1 天，这么多天内到期的日期刻度标橙，提醒临期期权
 const EXPIRY_SOON_COLOR = "rgb(249, 115, 22)";
 const Y_RANGE_PAD_RATIO = 0.1;
 const Y_RANGE_EDGE_TRIGGER_RATIO = 0.1;
@@ -762,7 +762,7 @@ function daysUntilExpiry(isoDate) {
 }
 
 function formatExpiryTick(isoDate) {
-  return daysUntilExpiry(isoDate) <= EXPIRY_SOON_DAYS
+  return daysUntilExpiry(isoDate) < EXPIRY_SOON_DAYS
     ? `<span style="color:${EXPIRY_SOON_COLOR}">${isoDate}</span>`
     : isoDate;
 }

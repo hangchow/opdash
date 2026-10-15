@@ -57,7 +57,7 @@ from core import (
 from options import OptionEnum
 
 PL_LABEL_GAP_POINTS = 4.0  # 标记边缘到盈亏文字的间距（点）
-EXPIRY_SOON_DAYS = 7  # 距今不超过这么多天（含当天）到期的日期刻度标橙，提醒临期期权
+EXPIRY_SOON_DAYS = 7  # 今天算第 1 天，这么多天内到期的日期刻度标橙，提醒临期期权
 EXPIRY_SOON_COLOR = "#f97316"
 
 logger = logging.getLogger("opdash")  # 固定日志名，避免显示为 __main__
@@ -622,7 +622,7 @@ def _apply_expiry_ticks(ax, unique_dates):
         default_color = plt.rcParams["xtick.color"]
     today = datetime.date.today()
     for strike_dt, label in zip(unique_dates, labels):
-        expiring_soon = (strike_dt.date() - today).days <= EXPIRY_SOON_DAYS
+        expiring_soon = (strike_dt.date() - today).days < EXPIRY_SOON_DAYS
         label.set_color(EXPIRY_SOON_COLOR if expiring_soon else default_color)
 
 

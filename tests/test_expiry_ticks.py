@@ -33,8 +33,9 @@ class ExpiryTickTests(unittest.TestCase):
             opdash._apply_expiry_ticks(self.ax, [dt(d) for d in dates])
         return [mcolors.to_rgba(label.get_color()) for label in self.ax.get_xticklabels()]
 
-    def test_dates_within_seven_days_including_today_are_orange(self):
-        colors = self.colors(["2026-10-15", "2026-10-16", "2026-10-23", "2026-10-24"])
+    def test_today_through_sixth_day_after_are_orange(self):
+        # 今天 10-16 是第 1 天，10-22 是第 7 天，10-23 已是第 8 天
+        colors = self.colors(["2026-10-15", "2026-10-16", "2026-10-22", "2026-10-23"])
         self.assertEqual(colors, [self.orange, self.orange, self.orange, self.default])
 
     def test_reused_ticks_reset_to_default_when_dates_change(self):
